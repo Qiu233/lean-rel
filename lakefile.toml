@@ -1,6 +1,10 @@
 name = "lean-rel"
 version = "0.1.0"
 defaultTargets = ["lean-rel"]
+# Lake parses the driver as a Lean name, so the hyphenated target needs escaping.
+testDriver = "«lean-rel-tests»"
+releaseRepo = "https://github.com/Qiu233/lean-rel"
+preferReleaseBuild = true
 
 [[require]]
 name = "leansqlite"

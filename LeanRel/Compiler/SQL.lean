@@ -25,7 +25,7 @@ initialize functionRules : SimpleScopedEnvExtension FunctionRule (NameMap Functi
   }
 
 /-- Declare the SQL interpretation of a native scalar function. -/
-syntax (name := sql_function) "sql_function " str num : attr
+syntax (name := sql_function) &"sql_function " str num : attr
 
 -- ParametricAttribute rejects imported declarations, but users must be able to
 -- write `attribute [sql_function "LOWER" 1] String.toLower` in an adapter module.

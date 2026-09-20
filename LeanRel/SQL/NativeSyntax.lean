@@ -7,7 +7,7 @@ open Lean
 /-- Resolve schema instances before elaborating field projections in a callback.
 The source type is known here, even when ordinary application elaboration has
 not yet synthesized the implicit SchemaRow argument. -/
-syntax:max (name := sqlFields) "sql_fields!" "(" term ")" "fun" ident "=>" term : term
+syntax:max (name := sqlFields) identDispatch(&"sql_fields!") "(" term ")" &"fun" ident "=>" term : term
 
 open Elab Term Meta in
 @[term_elab sqlFields]
@@ -25,16 +25,24 @@ def elabSqlFields : TermElab := fun stx expected => do
 
 -- Native terms, SQL clause order, and a lexical row binder. IN distinguishes a
 -- typed Lean source from a literal SQL table name. No term rewriting is needed.
-syntax nativeSqlJoin := "JOIN" ident "IN" term "ON" term
-syntax:max (name := nativeSqlSelect) "sql!" "[" "SELECT" ("DISTINCT")? term
-  "FROM" ident "IN" term nativeSqlJoin*
-  ("WHERE" term)? ("GROUP" "BY" term)? ("HAVING" term)?
-  ("ORDER" "BY" term)? ("LIMIT" term)? ("OFFSET" term)? "]" : term
-syntax:max (name := nativeSqlInsert) "sql!" "[" "INSERT" "INTO" term "VALUES" term "]" : term
-syntax:max (name := nativeSqlUpdate) "sql!" "[" "UPDATE" ident "IN" term
-  "SET" term ("WHERE" term)? "]" : term
-syntax:max (name := nativeSqlDelete) "sql!" "[" "DELETE" "FROM" ident "IN" term
-  ("WHERE" term)? "]" : term
+-- Clause words stop only the current embedded term. Parentheses and nested SQL
+-- brackets restore ordinary identifier parsing via `withoutForbidden`.
+@[run_parser_attribute_hooks]
+private def nativeSqlTerm : Parser.Parser :=
+  Parser.withForbiddens #["FROM", "JOIN", "ON", "WHERE", "GROUP", "HAVING",
+    "ORDER", "LIMIT", "OFFSET", "VALUES", "SET"] Parser.termParser
+
+syntax nativeSqlJoin := &"JOIN" ident &"IN" nativeSqlTerm &"ON" nativeSqlTerm
+syntax:max (name := nativeSqlSelect) identDispatch(&"sql!") "[" withoutForbidden(
+  &"SELECT" (&"DISTINCT")? nativeSqlTerm &"FROM" ident &"IN" nativeSqlTerm nativeSqlJoin*
+  (&"WHERE" nativeSqlTerm)? (&"GROUP" &"BY" nativeSqlTerm)? (&"HAVING" nativeSqlTerm)?
+  (&"ORDER" &"BY" nativeSqlTerm)? (&"LIMIT" nativeSqlTerm)? (&"OFFSET" nativeSqlTerm)?) "]" : term
+syntax:max (name := nativeSqlInsert) identDispatch(&"sql!") "[" withoutForbidden(
+  &"INSERT" &"INTO" nativeSqlTerm &"VALUES" nativeSqlTerm) "]" : term
+syntax:max (name := nativeSqlUpdate) identDispatch(&"sql!") "[" withoutForbidden(
+  &"UPDATE" ident &"IN" nativeSqlTerm &"SET" nativeSqlTerm (&"WHERE" nativeSqlTerm)?) "]" : term
+syntax:max (name := nativeSqlDelete) identDispatch(&"sql!") "[" withoutForbidden(
+  &"DELETE" &"FROM" ident &"IN" nativeSqlTerm (&"WHERE" nativeSqlTerm)?) "]" : term
 
 macro_rules
   | `(sql! [SELECT $[DISTINCT%$distinct]? $projection:term FROM $row:ident IN $source:term $[$joins:nativeSqlJoin]*

@@ -1,13 +1,14 @@
 import LeanRel.Frontend.Core
+import LeanRel.Parser
 
 namespace LeanRel.Frontend
 open Lean Elab Term
 
 declare_syntax_cat comprehension
-syntax (name := compFor) "for " ident (" : " term)? " in " term "; " comprehension : comprehension
-syntax (name := compWhere) "where " term "; " comprehension : comprehension
-syntax (name := compLet) "let " ident " := " term "; " comprehension : comprehension
-syntax (name := compYield) "yield " term : comprehension
+syntax (name := compFor) &"for " ident (" : " term)? &" in " term "; " comprehension : comprehension
+syntax (name := compWhere) &"where " term "; " comprehension : comprehension
+syntax (name := compLet) &"let " ident " := " term "; " comprehension : comprehension
+syntax (name := compYield) identDispatch(&"yield ") term : comprehension
 syntax (name := compYieldFrom) "yield* " term : comprehension
 
 /-- Downstream libraries can add clauses by defining macros for `queryBody%`. -/
@@ -15,11 +16,11 @@ syntax (name := queryBody) "queryBody%{" comprehension "}" : term
 
 declare_syntax_cat queryQualifier
 syntax ident (" : " term)? Parser.Term.leftArrow term : queryQualifier
-syntax "let " ident " := " term : queryQualifier
-syntax term : queryQualifier
+syntax &"let " ident " := " term : queryQualifier
+syntax (priority := low) term : queryQualifier
 declare_syntax_cat querySpec
-syntax "{" comprehension "}" : querySpec
-syntax "[" term " | " queryQualifier,* "]" : querySpec
+syntax "{" withoutForbidden(comprehension) "}" : querySpec
+syntax "[" withoutForbidden(term " | " queryQualifier,*) "]" : querySpec
 syntax:max (name := queryTerm) "query%" querySpec : term
 syntax (name := qualifierBody) "queryQualifier%[" queryQualifier "]" term : term
 

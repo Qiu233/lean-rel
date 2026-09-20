@@ -1,4 +1,5 @@
 import LeanRel.Data
+import LeanRel.Parser
 
 namespace LeanRel
 open Lean Meta Elab Command Term
@@ -20,16 +21,17 @@ def findSchema? (env : Environment) (name : Name) : Option SchemaInfo :=
   (schemaExtension.getState env).find? fun s => s.rowType == name
 
 declare_syntax_cat schemaColumnConstraint
-syntax "NOT" "NULL" : schemaColumnConstraint
-syntax "PRIMARY" "KEY" : schemaColumnConstraint
+syntax identDispatch(&"NOT") &"NULL" : schemaColumnConstraint
+syntax identDispatch(&"PRIMARY") &"KEY" : schemaColumnConstraint
+-- Constraints delimit an unparenthesized Lean type without reserving their names.
+@[run_parser_attribute_hooks]
+private def schemaColumnType : Parser.Parser :=
+  Parser.withForbiddens #["NOT", "PRIMARY"] Parser.termParser
+
 declare_syntax_cat schemaEntry
-syntax ident term schemaColumnConstraint* : schemaEntry
-syntax "PRIMARY" "KEY" "(" ident,+ ")" : schemaEntry
--- Command parsers need the identifier entry as well as the token entry. Keep
--- `schema` available as an ordinary identifier, including a schema field name.
-private def schemaKeyword : Lean.Parser.Parser :=
-  Parser.nonReservedSymbol "schema" (includeIdent := true)
-syntax (name := schemaDecl) schemaKeyword ident str " (" schemaEntry,+ ")" : command
+syntax (priority := low) ident schemaColumnType schemaColumnConstraint* : schemaEntry
+syntax identDispatch(&"PRIMARY") &"KEY" "(" ident,+ ")" : schemaEntry
+syntax (name := schemaDecl) identDispatch(&"schema") ident str " (" schemaEntry,+ ")" : command
 
 private def scalarTypeTerm : ScalarType → TermElabM (TSyntax `term)
   | .int => `(ScalarType.int)

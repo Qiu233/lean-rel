@@ -61,7 +61,7 @@ The repository also includes a [demo](Main.lean) and [integration tests](Tests/M
 
 ```sh
 lake exe lean-rel
-lake exe lean-rel-tests
+lake test
 ```
 
 The examples below continue from the imports and `Person` declaration in the quick start. Standard translations are enabled by default in these examples. The library API is still evolving.
@@ -148,7 +148,7 @@ def names := (query% [p.name | p : Person ← table]).collect
 Comprehension clauses can be extended through macros:
 
 ```lean
-syntax "unless " term : queryQualifier
+syntax &"unless " term : queryQualifier
 macro_rules
   | `(queryQualifier%[ unless $p:term ] $body:term) =>
     `(if $p then Query.empty else $body)
@@ -218,6 +218,8 @@ def direct (minimum : Int) := sql! [
 ```
 
 `FROM p IN source` binds the generated field container. Field access, ordinary functions, tuples, and record updates reuse the schema's column names and types. `direct` has type `SQL.Plan (String × Int)`; `.fetch connection` executes it and decodes the result. `.query` and `.statement` expose the public AST, with coercions available when those types are expected.
+
+DSL keywords remain ordinary Lean identifiers outside the DSL. Inside `sql!`, clause words delimit unparenthesized Lean terms; parentheses allow them as values, for example `LIMIT (LIMIT)` when a Lean parameter is named `LIMIT`.
 
 Arithmetic uses Lean's `+ - * /`, and string concatenation uses `++`. Comparisons and logical operations use `==. !=. <. <=. >. >=. &&. ||.` to construct SQL expressions. Nullable comparisons retain `Option Bool`; `.isNull`, `.isNotNull`, and `.coalesce` provide explicit NULL operations.
 
@@ -324,3 +326,9 @@ SQLite has a connection driver and integration tests. PostgreSQL and MySQL curre
 - SQL type and dialect coverage is incomplete. There is no migration system, incremental lens optimizer, or proof of semantic preservation for the entire SQL compiler.
 
 Further details are in the [design notes](docs/design.md) and [SQL type coverage notes](docs/sql-types.md), currently written in Chinese.
+
+## CI and releases
+
+[CI](.github/workflows/lean_action_ci.yml) builds the library, demo, and test executable and runs `lake test` on pushes and pull requests. Tests include native SQLite integration through leansqlite.
+
+To publish a version, update `version` in `lakefile.toml`, push the change to `master`, and manually run the [Release workflow](.github/workflows/release.yml) on `master` with the matching tag (for example, `v0.1.0`). It validates the version and tests, builds Lake archives for Linux x86-64, macOS x86-64/ARM64, and Windows x86-64, then creates the tag and GitHub Release. A retry can reuse a tag pointing to the same commit; a tag pointing elsewhere is rejected. Lake prefers these archives when the library is used as a dependency at a released revision.

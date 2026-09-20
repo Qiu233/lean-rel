@@ -64,11 +64,11 @@ def nativeGrouped := sql! [SELECT (p.teamId, p.id.count) FROM p IN @table Person
 def nativeRecord := sql! [SELECT p FROM p IN @table Person _ ORDER BY [p.id.asc]]
 
 -- Full Lean terms and a later syntax extension work without changing a central AST.
-syntax "unless " term : queryQualifier
+syntax &"unless " term : queryQualifier
 macro_rules
   | `(queryQualifier%[ unless $p:term ] $body:term) => `(if $p then Query.empty else $body)
 -- The block clause extension exercises the public queryBody% extension point.
-syntax "unless " term "; " comprehension : comprehension
+syntax &"unless " term "; " comprehension : comprehension
 macro_rules
   | `(queryBody%{ unless $p:term; $body:comprehension }) =>
     `(if $p then Query.empty else queryBody%{ $body })

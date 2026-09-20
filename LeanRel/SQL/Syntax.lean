@@ -1,4 +1,5 @@
 import LeanRel.SQL.Ast
+import LeanRel.Parser
 
 namespace LeanRel.SQL.Notation
 open Lean Elab Term
@@ -10,18 +11,19 @@ declare_syntax_cat sqlStmt
 declare_syntax_cat sqlDirection
 declare_syntax_cat sqlType
 declare_syntax_cat sqlTableEntry
-syntax ident : sqlExpr
+-- Prefer SQL literals and special forms over their identifier/function fallbacks.
+syntax (priority := low) ident : sqlExpr
 syntax num : sqlExpr
 syntax str : sqlExpr
-syntax "NULL" : sqlExpr
-syntax "TRUE" : sqlExpr
-syntax "FALSE" : sqlExpr
+syntax identDispatch(&"NULL") : sqlExpr
+syntax identDispatch(&"TRUE") : sqlExpr
+syntax identDispatch(&"FALSE") : sqlExpr
 syntax "*" : sqlExpr
 syntax "${" term "}" : sqlExpr
 syntax "@{" term "}" : sqlExpr
 syntax "(" sqlExpr ")" : sqlExpr
-syntax ident "(" sqlExpr,* ")" : sqlExpr
-syntax ident "(" "DISTINCT" sqlExpr,+ ")" : sqlExpr
+syntax (priority := low) ident "(" sqlExpr,* ")" : sqlExpr
+syntax (priority := low) ident "(" &"DISTINCT" sqlExpr,+ ")" : sqlExpr
 syntax:70 sqlExpr:70 " * " sqlExpr:71 : sqlExpr
 syntax:70 sqlExpr:70 " / " sqlExpr:71 : sqlExpr
 syntax:70 sqlExpr:70 " % " sqlExpr:71 : sqlExpr
@@ -34,78 +36,78 @@ syntax:50 sqlExpr:51 " < " sqlExpr:51 : sqlExpr
 syntax:50 sqlExpr:51 " <= " sqlExpr:51 : sqlExpr
 syntax:50 sqlExpr:51 " > " sqlExpr:51 : sqlExpr
 syntax:50 sqlExpr:51 " >= " sqlExpr:51 : sqlExpr
-syntax:50 sqlExpr:51 "LIKE" sqlExpr:51 : sqlExpr
-syntax:50 sqlExpr:51 "IS" "NULL" : sqlExpr
-syntax:50 sqlExpr:51 "IS" "NOT" "NULL" : sqlExpr
-syntax:50 sqlExpr:51 "IN" "(" sqlExpr,* ")" : sqlExpr
-syntax:50 sqlExpr:51 "IN" "(" sqlQuery ")" : sqlExpr
-syntax:40 "NOT" sqlExpr:40 : sqlExpr
-syntax:35 sqlExpr:35 "AND" sqlExpr:36 : sqlExpr
-syntax:30 sqlExpr:30 "OR" sqlExpr:31 : sqlExpr
+syntax:50 sqlExpr:51 identDispatch(&"LIKE") sqlExpr:51 : sqlExpr
+syntax:50 sqlExpr:51 identDispatch(&"IS") &"NULL" : sqlExpr
+syntax:50 sqlExpr:51 identDispatch(&"IS") &"NOT" &"NULL" : sqlExpr
+syntax:50 sqlExpr:51 identDispatch(&"IN") "(" sqlExpr,* ")" : sqlExpr
+syntax:50 sqlExpr:51 identDispatch(&"IN") "(" sqlQuery ")" : sqlExpr
+syntax:40 identDispatch(&"NOT") sqlExpr:40 : sqlExpr
+syntax:35 sqlExpr:35 identDispatch(&"AND") sqlExpr:36 : sqlExpr
+syntax:30 sqlExpr:30 identDispatch(&"OR") sqlExpr:31 : sqlExpr
 syntax:75 "-" sqlExpr:75 : sqlExpr
-syntax "EXISTS" "(" sqlQuery ")" : sqlExpr
+syntax identDispatch(&"EXISTS") "(" sqlQuery ")" : sqlExpr
 syntax "(" sqlQuery ")" : sqlExpr
-syntax "CASE" ("WHEN" sqlExpr "THEN" sqlExpr)+ "ELSE" sqlExpr "END" : sqlExpr
-syntax "CAST" "(" sqlExpr "AS" sqlType ")" : sqlExpr
-syntax "ASC" : sqlDirection
-syntax "DESC" : sqlDirection
+syntax identDispatch(&"CASE") (&"WHEN" sqlExpr &"THEN" sqlExpr)+ &"ELSE" sqlExpr &"END" : sqlExpr
+syntax identDispatch(&"CAST") "(" sqlExpr &"AS" sqlType ")" : sqlExpr
+syntax identDispatch(&"ASC") : sqlDirection
+syntax identDispatch(&"DESC") : sqlDirection
 syntax sqlOrder := sqlExpr (sqlDirection)?
-syntax sqlProjection := sqlExpr ("AS" ident)?
-syntax:80 sqlExpr:80 "OVER" "(" ("PARTITION" "BY" sqlExpr,+)?
-  ("ORDER" "BY" sqlOrder,+)? ")" : sqlExpr
-syntax ident ("AS" ident)? : sqlSource
-syntax "(" sqlQuery ")" "AS" ident : sqlSource
-syntax "@{" term "}" ("AS" ident)? : sqlSource
-syntax:60 sqlSource:60 "JOIN" sqlSource:61 "ON" sqlExpr : sqlSource
-syntax:60 sqlSource:60 "LEFT" "JOIN" sqlSource:61 "ON" sqlExpr : sqlSource
-syntax:60 sqlSource:60 "RIGHT" "JOIN" sqlSource:61 "ON" sqlExpr : sqlSource
-syntax:60 sqlSource:60 "FULL" "JOIN" sqlSource:61 "ON" sqlExpr : sqlSource
-syntax:60 sqlSource:60 "CROSS" "JOIN" sqlSource:61 : sqlSource
-syntax "SELECT" ("DISTINCT")? sqlProjection,+ ("FROM" sqlSource)?
-  ("WHERE" sqlExpr)? ("GROUP" "BY" sqlExpr,+)? ("HAVING" sqlExpr)?
-  ("ORDER" "BY" sqlOrder,+)? ("LIMIT" num)? ("OFFSET" num)? : sqlQuery
-syntax:20 sqlQuery:20 "UNION" sqlQuery:21 : sqlQuery
-syntax:20 sqlQuery:20 "UNION" "ALL" sqlQuery:21 : sqlQuery
-syntax:20 sqlQuery:20 "EXCEPT" sqlQuery:21 : sqlQuery
-syntax:25 sqlQuery:25 "INTERSECT" sqlQuery:26 : sqlQuery
-syntax sqlCTE := ident "AS" "(" sqlQuery ")"
-syntax "WITH" ("RECURSIVE")? sqlCTE,+ sqlQuery : sqlQuery
+syntax sqlProjection := sqlExpr (&"AS" ident)?
+syntax:80 sqlExpr:80 identDispatch(&"OVER") "(" (&"PARTITION" &"BY" sqlExpr,+)?
+  (&"ORDER" &"BY" sqlOrder,+)? ")" : sqlExpr
+syntax ident (&"AS" ident)? : sqlSource
+syntax "(" sqlQuery ")" &"AS" ident : sqlSource
+syntax "@{" term "}" (&"AS" ident)? : sqlSource
+syntax:60 sqlSource:60 identDispatch(&"JOIN") sqlSource:61 &"ON" sqlExpr : sqlSource
+syntax:60 sqlSource:60 identDispatch(&"LEFT") &"JOIN" sqlSource:61 &"ON" sqlExpr : sqlSource
+syntax:60 sqlSource:60 identDispatch(&"RIGHT") &"JOIN" sqlSource:61 &"ON" sqlExpr : sqlSource
+syntax:60 sqlSource:60 identDispatch(&"FULL") &"JOIN" sqlSource:61 &"ON" sqlExpr : sqlSource
+syntax:60 sqlSource:60 identDispatch(&"CROSS") &"JOIN" sqlSource:61 : sqlSource
+syntax identDispatch(&"SELECT") (&"DISTINCT")? sqlProjection,+ (&"FROM" sqlSource)?
+  (&"WHERE" sqlExpr)? (&"GROUP" &"BY" sqlExpr,+)? (&"HAVING" sqlExpr)?
+  (&"ORDER" &"BY" sqlOrder,+)? (&"LIMIT" num)? (&"OFFSET" num)? : sqlQuery
+syntax:20 sqlQuery:20 identDispatch(&"UNION") sqlQuery:21 : sqlQuery
+syntax:20 sqlQuery:20 identDispatch(&"UNION") &"ALL" sqlQuery:21 : sqlQuery
+syntax:20 sqlQuery:20 identDispatch(&"EXCEPT") sqlQuery:21 : sqlQuery
+syntax:25 sqlQuery:25 identDispatch(&"INTERSECT") sqlQuery:26 : sqlQuery
+syntax sqlCTE := ident &"AS" "(" sqlQuery ")"
+syntax identDispatch(&"WITH") (&"RECURSIVE")? sqlCTE,+ sqlQuery : sqlQuery
 syntax "@{" term "}" : sqlQuery
 syntax sqlQuery : sqlStmt
 syntax sqlAssignment := ident "=" sqlExpr
 syntax sqlValuesRow := "(" sqlExpr,* ")"
-syntax "INSERT" "INTO" ident "(" ident,+ ")" "VALUES" sqlValuesRow,+
-  ("RETURNING" sqlProjection,+)? : sqlStmt
-syntax "INSERT" "INTO" ident "(" ident,+ ")" sqlQuery
-  ("RETURNING" sqlProjection,+)? : sqlStmt
-syntax "UPDATE" ident "SET" sqlAssignment,+ ("WHERE" sqlExpr)?
-  ("RETURNING" sqlProjection,+)? : sqlStmt
-syntax "DELETE" "FROM" ident ("WHERE" sqlExpr)? ("RETURNING" sqlProjection,+)? : sqlStmt
-syntax "INTEGER" : sqlType
-syntax "BIGINT" : sqlType
-syntax "BOOLEAN" : sqlType
-syntax "TEXT" : sqlType
-syntax "REAL" : sqlType
-syntax "DATE" : sqlType
-syntax "TIMESTAMP" : sqlType
-syntax "BLOB" : sqlType
-syntax "VARCHAR" "(" num ")" : sqlType
-syntax "DECIMAL" "(" num "," num ")" : sqlType
-syntax ident sqlType ("NOT" "NULL")? ("DEFAULT" sqlExpr)? : sqlTableEntry
-syntax "PRIMARY" "KEY" "(" ident,+ ")" : sqlTableEntry
-syntax "UNIQUE" "(" ident,+ ")" : sqlTableEntry
-syntax "FOREIGN" "KEY" "(" ident,+ ")" "REFERENCES" ident "(" ident,+ ")" : sqlTableEntry
-syntax "CHECK" "(" sqlExpr ")" : sqlTableEntry
-syntax "CREATE" "TABLE" ("IF" "NOT" "EXISTS")? ident "(" sqlTableEntry,+ ")" : sqlStmt
-syntax "CREATE" ("UNIQUE")? "INDEX" ident "ON" ident "(" ident,+ ")" : sqlStmt
-syntax "CREATE" "VIEW" ident "AS" sqlQuery : sqlStmt
-syntax "DROP" "TABLE" ("IF" "EXISTS")? ident : sqlStmt
-syntax "BEGIN" : sqlStmt
-syntax "COMMIT" : sqlStmt
-syntax "ROLLBACK" : sqlStmt
-syntax:max (name := sqlStatementTerm) "sql!" "[" sqlStmt "]" : term
-syntax:max (name := sqlQueryTerm) "sql_query!" "[" sqlQuery "]" : term
-syntax:max (name := sqlExprTerm) "sql_expr!" "[" sqlExpr "]" : term
+syntax identDispatch(&"INSERT") &"INTO" ident "(" ident,+ ")" &"VALUES" sqlValuesRow,+
+  (&"RETURNING" sqlProjection,+)? : sqlStmt
+syntax identDispatch(&"INSERT") &"INTO" ident "(" ident,+ ")" sqlQuery
+  (&"RETURNING" sqlProjection,+)? : sqlStmt
+syntax identDispatch(&"UPDATE") ident &"SET" sqlAssignment,+ (&"WHERE" sqlExpr)?
+  (&"RETURNING" sqlProjection,+)? : sqlStmt
+syntax identDispatch(&"DELETE") &"FROM" ident (&"WHERE" sqlExpr)? (&"RETURNING" sqlProjection,+)? : sqlStmt
+syntax identDispatch(&"INTEGER") : sqlType
+syntax identDispatch(&"BIGINT") : sqlType
+syntax identDispatch(&"BOOLEAN") : sqlType
+syntax identDispatch(&"TEXT") : sqlType
+syntax identDispatch(&"REAL") : sqlType
+syntax identDispatch(&"DATE") : sqlType
+syntax identDispatch(&"TIMESTAMP") : sqlType
+syntax identDispatch(&"BLOB") : sqlType
+syntax identDispatch(&"VARCHAR") "(" num ")" : sqlType
+syntax identDispatch(&"DECIMAL") "(" num "," num ")" : sqlType
+syntax ident sqlType (&"NOT" &"NULL")? (&"DEFAULT" sqlExpr)? : sqlTableEntry
+syntax identDispatch(&"PRIMARY") &"KEY" "(" ident,+ ")" : sqlTableEntry
+syntax identDispatch(&"UNIQUE") "(" ident,+ ")" : sqlTableEntry
+syntax identDispatch(&"FOREIGN") &"KEY" "(" ident,+ ")" &"REFERENCES" ident "(" ident,+ ")" : sqlTableEntry
+syntax identDispatch(&"CHECK") "(" sqlExpr ")" : sqlTableEntry
+syntax identDispatch(&"CREATE") &"TABLE" (&"IF" &"NOT" &"EXISTS")? ident "(" sqlTableEntry,+ ")" : sqlStmt
+syntax identDispatch(&"CREATE") (&"UNIQUE")? &"INDEX" ident &"ON" ident "(" ident,+ ")" : sqlStmt
+syntax identDispatch(&"CREATE") &"VIEW" ident &"AS" sqlQuery : sqlStmt
+syntax identDispatch(&"DROP") &"TABLE" (&"IF" &"EXISTS")? ident : sqlStmt
+syntax identDispatch(&"BEGIN") : sqlStmt
+syntax identDispatch(&"COMMIT") : sqlStmt
+syntax identDispatch(&"ROLLBACK") : sqlStmt
+syntax:max (name := sqlStatementTerm) identDispatch(&"sql!") "[" withoutForbidden(sqlStmt) "]" : term
+syntax:max (name := sqlQueryTerm) identDispatch(&"sql_query!") "[" withoutForbidden(sqlQuery) "]" : term
+syntax:max (name := sqlExprTerm) identDispatch(&"sql_expr!") "[" withoutForbidden(sqlExpr) "]" : term
 
 private def nameParts (n : Lean.Ident) : TSyntax `term := quote (n.getId.components.map Name.toString)
 private def nameString (n : Lean.Ident) : TSyntax `term := quote n.getId.toString

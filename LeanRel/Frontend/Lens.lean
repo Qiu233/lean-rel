@@ -239,7 +239,7 @@ def View.modify (view : View α) (transform : α → α) : Update := { sources :
   (view.put (rows.map transform)).run db }
 
 open Lean Elab Term
-syntax:max (name := updateComprehension) "update% " "[" term " | " queryQualifier,+ "]" : term
+syntax:max (name := updateComprehension) "update% " "[" withoutForbidden(term " | " queryQualifier,+) "]" : term
 
 @[term_elab updateComprehension]
 def elabUpdate : TermElab := fun stx expected => do

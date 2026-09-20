@@ -1,16 +1,26 @@
-name: Lean Action CI
+name: CI
 
 on:
   push:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
-      - run: lake build lean-rel-tests
-      - run: lake exe lean-rel-tests
+        with:
+          build: true
+          build-args: LeanRel lean-rel lean-rel-tests
+          test: true
