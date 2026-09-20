@@ -3,9 +3,9 @@ import LeanRel
 namespace LeanRel.Tests.FunctionRules
 open Frontend
 
-schema FunctionRow "function_rows" {
-  id : Int, text : String, number : Int, real : Float, optional : Option String
-} key [id]
+schema FunctionRow "function_rows" (
+  id Int PRIMARY KEY, text String, number Int, real Float, optional Option String
+)
 
 -- Opaque definitions make accidental unfolding unable to hide missing rules.
 opaque nativeLower (s : String) : String := s.toLower

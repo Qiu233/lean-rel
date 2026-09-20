@@ -3,7 +3,11 @@ import LeanRel
 open LeanRel LeanRel.Frontend
 open scoped LeanRel.SQL
 
-schema Person "people" { id : Int, name : String, age : Int } key [id]
+schema Person "people" (
+  id Int PRIMARY KEY,
+  name String NOT NULL,
+  age Int
+)
 
 def adults (minimum : Int) := query% [
   (p.name, p.age + 1) | p : Person ← table, p.age ≥ minimum]

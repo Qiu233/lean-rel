@@ -4,12 +4,20 @@ namespace LeanRel.Tests
 open Frontend
 
 abbrev Age := Int
-schema Person "people" { id : Int, name : String, age : Age, teamId : Int, note : Option String } key [id]
-schema Team "teams" { teamId : Int, label : String } key [teamId]
-schema Brief "brief" { id : Int, name : String } key [id]
-schema Track "tracks" { album : Int, track : Int, rating : Int } key [album, track]
-  dependencies { [track] -> [rating] }
-schema MetadataField "metadata_fields" { id : Int, schema : String, tableName : String } key [id]
+schema Person "people" (
+  id Int PRIMARY KEY,
+  name String NOT NULL,
+  age Age, teamId Int,
+  note Option String
+)
+schema Team "teams" (teamId Int, label String, PRIMARY KEY (teamId))
+schema Brief "brief" (id Int PRIMARY KEY, name String)
+schema Track "tracks" (album Int, track Int, rating Int, PRIMARY KEY (album, track))
+schema MetadataField "metadata_fields" (id Int PRIMARY KEY, schema String, tableName String)
+
+-- General functional dependencies belong to lens source configuration, not SQL DDL.
+def tracksSource := (@table Track _).withDependencies [⟨["track"], ["rating"]⟩]
+def tracksView := View.base tracksSource
 
 -- Test declaration attributes and SQL arity excluding implicit Lean parameters.
 @[sql_function "COALESCE" 2]

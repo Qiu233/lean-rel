@@ -19,14 +19,17 @@ initialize schemaExtension : SimplePersistentEnvExtension SchemaInfo (Array Sche
 def findSchema? (env : Environment) (name : Name) : Option SchemaInfo :=
   (schemaExtension.getState env).find? fun s => s.rowType == name
 
-syntax schemaField := ident " : " term
-syntax schemaDependency := "[" ident,* "]" " -> " "[" ident,* "]"
+declare_syntax_cat schemaColumnConstraint
+syntax "NOT" "NULL" : schemaColumnConstraint
+syntax "PRIMARY" "KEY" : schemaColumnConstraint
+declare_syntax_cat schemaEntry
+syntax ident term schemaColumnConstraint* : schemaEntry
+syntax "PRIMARY" "KEY" "(" ident,+ ")" : schemaEntry
 -- Command parsers need the identifier entry as well as the token entry. Keep
 -- `schema` available as an ordinary identifier, including a schema field name.
 private def schemaKeyword : Lean.Parser.Parser :=
   Parser.nonReservedSymbol "schema" (includeIdent := true)
-syntax (name := schemaDecl) schemaKeyword ident str " {" schemaField,+ "}"
-  &"key" "[" ident,* "]" (&"dependencies" "{" sepBy1(schemaDependency, ";") "}")? : command
+syntax (name := schemaDecl) schemaKeyword ident str " (" schemaEntry,+ ")" : command
 
 private def scalarTypeTerm : ScalarType → TermElabM (TSyntax `term)
   | .int => `(ScalarType.int)
@@ -38,34 +41,51 @@ private def scalarTypeTerm : ScalarType → TermElabM (TSyntax `term)
 
 @[command_elab schemaDecl]
 unsafe def elabSchema : CommandElab := fun stx => do
-  let `(command| schema $name:ident $dbName:str { $[$fields:schemaField],* } key [$[$keys:ident],*]
-    $[dependencies { $[$fds:schemaDependency];* }]?) := stx | throwUnsupportedSyntax
+  let `(command| schema $name:ident $dbName:str ($[$entries:schemaEntry],*)) := stx
+    | throwUnsupportedSyntax
   let mut fieldNames : Array Ident := #[]
   let mut types : Array (TSyntax `term) := #[]
-  for f in fields do
-    let `(schemaField| $n:ident : $t:term) := f | throwUnsupportedSyntax
-    if fieldNames.any (·.getId == n.getId) then throwErrorAt n "duplicate schema field"
-    if n.getId.isAnonymous || n.getId.components.length != 1 then
-      throwErrorAt n "a field needs a simple identifier"
-    if n.getId.toString.toUpper == "TABLE" then
-      throwErrorAt n "schema field '{n.getId}' is reserved by the SQL standard (TABLE)"
-    fieldNames := fieldNames.push n
-    types := types.push t
+  let mut required : Array Bool := #[]
+  let mut primaryKey : Option (Array Ident) := none
+  for entry in entries do
+    match entry with
+    | `(schemaEntry| PRIMARY KEY ($[$keys:ident],*)) =>
+      if primaryKey.isSome then throwErrorAt entry "a schema can declare only one PRIMARY KEY"
+      primaryKey := some keys
+    | `(schemaEntry| $n:ident $t:term $[$constraints:schemaColumnConstraint]*) =>
+      if fieldNames.any (·.getId == n.getId) then throwErrorAt n "duplicate schema field"
+      if n.getId.isAnonymous || n.getId.components.length != 1 then
+        throwErrorAt n "a field needs a simple identifier"
+      if n.getId.toString.toUpper == "TABLE" then
+        throwErrorAt n "schema field '{n.getId}' is reserved by the SQL standard (TABLE)"
+      let mut notNull := false
+      for constraint in constraints do
+        match constraint with
+        | `(schemaColumnConstraint| NOT NULL) =>
+          if notNull then throwErrorAt constraint "duplicate NOT NULL constraint"
+          notNull := true
+        | `(schemaColumnConstraint| PRIMARY KEY) =>
+          if primaryKey.isSome then throwErrorAt constraint "a schema can declare only one PRIMARY KEY"
+          primaryKey := some #[n]
+        | _ => throwUnsupportedSyntax
+      fieldNames := fieldNames.push n
+      types := types.push t
+      required := required.push notNull
+    | _ => throwUnsupportedSyntax
   let names := fieldNames.map fun n => n.getId.toString
-  let mut dependencies : Array FunctionalDependency := #[]
-  for fd in fds.getD #[] do
-    let `(schemaDependency| [$[$xs:ident],*] -> [$[$ys:ident],*]) := fd | throwUnsupportedSyntax
-    dependencies := dependencies.push ⟨xs.toList.map (·.getId.toString), ys.toList.map (·.getId.toString)⟩
   let columnTypes ← liftTermElabM do
     types.mapM fun type => do
       let code ← elabTerm (← `(ColumnType.type (α := $type))) (some (mkConst ``ScalarType))
       synthesizeSyntheticMVarsNoPostponing
       evalExpr ScalarType (mkConst ``ScalarType) (← instantiateMVars code)
+  for ((n, type), notNull) in (fieldNames.zip columnTypes).zip required do
+    if notNull then
+      if let .nullable _ := type then
+        throwErrorAt n "NOT NULL conflicts with the nullable Lean type of '{n.getId}'"
   let definition : TableDef := {
     name := dbName.getString
     columns := (names.zip columnTypes).toList.map fun (n, t) => ⟨n, t⟩
-    key := keys.toList.map (·.getId.toString)
-    dependencies := dependencies.toList
+    key := (primaryKey.getD #[]).toList.map (·.getId.toString)
   }
   if let .error err := definition.validate then throwErrorAt stx err
   elabCommand (← `(structure $name where
@@ -106,11 +126,9 @@ unsafe def elabSchema : CommandElab := fun stx => do
     shape := Shape.record [$shapes,*]))
   let cols ← liftTermElabM do
     definition.columns.toArray.mapM fun c => do `(Column.mk $(quote c.name) $(← scalarTypeTerm c.type))
-  let deps ← dependencies.mapM fun d =>
-    `(FunctionalDependency.mk $(quote d.determinant) $(quote d.dependent))
   elabCommand (← `(instance : HasTable $name where
     table := ⟨{
-      name := $dbName, columns := [$cols,*], key := $(quote definition.key), dependencies := [$deps,*]}⟩))
+      name := $dbName, columns := [$cols,*], key := $(quote definition.key)}⟩))
   let fullName := (← getCurrNamespace) ++ name.getId
   let info : SchemaInfo := {
     rowType := fullName

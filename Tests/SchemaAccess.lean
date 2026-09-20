@@ -55,12 +55,65 @@ end
 #guard (HasTable.schema MetadataField).names == ["id", "schema", "tableName"]
 def metadataQuery := sql% [(r.schema, r.tableName) | r : MetadataField ← table]
 
+-- SQL-style constraints can precede the columns, or follow a column's Lean type.
+schema CompositeKey "composite_keys" (
+  PRIMARY KEY (leftId, rightId),
+  leftId Int NOT NULL,
+  rightId Int,
+  note Option String
+)
+schema InlineKey "inline_keys" (id Int PRIMARY KEY NOT NULL, label String)
+schema Keyless "keyless" (value Int, note (Option String))
+
+#guard (HasTable.schema CompositeKey).key == ["leftId", "rightId"]
+#guard (HasTable.schema CompositeKey).columns[2]!.type == .nullable .text
+#guard (HasTable.schema InlineKey).key == ["id"]
+#guard (HasTable.schema Keyless).key.isEmpty
+#guard ((query% [r.value | r : Keyless ← table]).run
+  [("keyless", records [Keyless.mk 1 none, Keyless.mk 1 none])]).toOption == some [1, 1]
+#guard ((View.base (@table Keyless _)).get.run [("keyless", [])]).toOption.isNone
+#guard ((SQL.CreateTable.ofTable (HasTable.schema InlineKey) >>= fun ddl =>
+  SQL.render .sqlite (.createTable ddl)).toOption.map (·.sql)) ==
+  some "CREATE TABLE \"inline_keys\" (\"id\" BIGINT NOT NULL, \"label\" TEXT NOT NULL, PRIMARY KEY (\"id\"))"
+
+-- Additional FDs still reject invalid snapshots after moving out of the command.
+private def inconsistentTracks : Database :=
+  [("tracks", records [Track.mk 1 5 3, Track.mk 2 5 4])]
+#guard (HasTable.schema Track).dependencies.isEmpty
+#guard ((Query.scan (@table Track _)).run inconsistentTracks).toOption.isSome
+#guard (tracksView.get.run inconsistentTracks).toOption.isNone
+#guard ((View.base ((@table Track _).withDependencies [⟨["missing"], ["rating"]⟩])).get.run database).toOption.isNone
+
+/-- error: a schema can declare only one PRIMARY KEY -/
+#guard_msgs in
+schema MultipleKeys "bad" (id Int PRIMARY KEY, other Int PRIMARY KEY)
+
+/-- error: a schema can declare only one PRIMARY KEY -/
+#guard_msgs in
+schema MixedKeys "bad" (id Int PRIMARY KEY, PRIMARY KEY (id))
+
+/-- error: nullable key column: id -/
+#guard_msgs in
+schema NullableKey "bad" (id Option Int PRIMARY KEY)
+
+/-- error: NOT NULL conflicts with the nullable Lean type of 'note' -/
+#guard_msgs in
+schema NullableRequired "bad" (note Option String NOT NULL)
+
+/-- error: duplicate NOT NULL constraint -/
+#guard_msgs in
+schema DuplicateRequired "bad" (id Int NOT NULL NOT NULL)
+
+/-- error: a schema needs at least one column -/
+#guard_msgs in
+schema MissingColumns "bad" (PRIMARY KEY (id))
+
 /-- error: schema field 'table' is reserved by the SQL standard (TABLE) -/
 #guard_msgs in
-schema ReservedTable "reserved_table" { id : Int, table : String } key [id]
+schema ReservedTable "reserved_table" (id Int PRIMARY KEY, table String)
 
 /-- error: schema field 'TaBlE' is reserved by the SQL standard (TABLE) -/
 #guard_msgs in
-schema ReservedMixedCase "reserved_table" { id : Int, TaBlE : String } key [id]
+schema ReservedMixedCase "reserved_table" (id Int PRIMARY KEY, TaBlE String)
 
 end LeanRel.Tests.SchemaAccess

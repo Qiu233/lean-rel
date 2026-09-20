@@ -6,7 +6,7 @@ namespace LeanRel.Tests.MiddleOnly
 open LeanRel
 open scoped LeanRel.SQL
 
-schema Item "items" { id : Int, title : String, enabled : Bool, bytes : Array UInt8 } key [id]
+schema Item "items" (id Int PRIMARY KEY, title String, enabled Bool, bytes Array UInt8)
 
 def reusable (i : Item.Columns SQL.Scalar) := i.enabled &&. (i.id >. 0)
 def query := sql! [SELECT i FROM i IN @table Item _ WHERE reusable i]
@@ -28,10 +28,10 @@ def composed := sql_query! [SELECT title FROM @{HasTable.schema Item} WHERE @{fr
 
 /-- error: unknown key column: missing -/
 #guard_msgs in
-schema BadKey "bad" { id : Int } key [missing]
+schema BadKey "bad" (id Int, PRIMARY KEY (missing))
 
 /-- error: duplicate schema field -/
 #guard_msgs in
-schema BadFields "bad" { id : Int, id : Int } key [id]
+schema BadFields "bad" (id Int PRIMARY KEY, id Int)
 
 end LeanRel.Tests.MiddleOnly

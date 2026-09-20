@@ -204,6 +204,12 @@ structure Source (α : Type) where
   definition : TableDef
   deriving Repr
 
+/-- Add functional dependencies for relational lens validation and propagation.
+Native source reads and lens updates validate them; SQL DDL does not encode them. -/
+def Source.withDependencies (source : Source α) (dependencies : List FunctionalDependency) : Source α :=
+  {source with definition := {source.definition with
+    dependencies := source.definition.dependencies ++ dependencies}}
+
 /-- The default table for a row type. Schema declarations generate this instance
 without adding `table` or `schema` declarations to the row type's namespace. -/
 class HasTable (α : Type) where

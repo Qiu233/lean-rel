@@ -37,6 +37,10 @@ SQL renderer 负责方言差异；connection 负责准备语句、绑定值、�
 
 [Lean-zh/protobuf](https://github.com/Lean-zh/protobuf) 的 internal notation 展示了很适合这里的方法：把声明展开成常规 Lean 定义，并用环境扩展保留额外信息。这里采用同一路线，生成原生记录、通用字段容器、codec 和 `HasTable` instance，同时登记可导入的元数据。
 
+声明主体使用 SQL 风格的 `schema Person "people" (id Int PRIMARY KEY, name String NOT NULL)`，支持单列和表级复合主键。字段类型仍是 Lean term；`Option` 决定可空性，`NOT NULL` 对可空类型报错。省略主键可声明无键数据源；基本 lens 更新要求主键。约束先收集、后统一校验，所以表级主键也能写在列声明之前。
+
+保留 Lean 类型的原因是 SQL 类型体系并不封闭：标准中的 `CREATE DOMAIN` 和 `CREATE TYPE` 允许新名称。要从任意 SQL 类型自动得到 Lean 类型，需要可扩展的名称解析与表示约定；内建类型可以静态翻译，但不能据此覆盖完整类型体系。当前直接复用 Lean 的名称解析、类型别名和 typeclass。[SQL 类型支持](sql-types.md)记录各层实际覆盖及后续需要扩展的表示。
+
 只返回一个运行时 schema 值不足以直接产生可用的原生字段声明；command 可以同时提供两者。`table`（即 `HasTable.table`）与 `HasTable.schema Person` 都是普通 Lean term，分别取得 typed source 和它的元数据。原先的 `$schemaId` 只是 elaborator 为 `Person.schema` 构造名称的局部变量，没有特殊语义；现在与 `Person.table` 一起移除，不再占用记录字段名称。需要显式行类型时写 `@table Person _`。
 
 SQL adapter 根据静态 row type 获取字段，物理 source 的名字可以来自运行时值；局部 `HasTable` instance 也遵循同一逻辑。schema 元数据扩展仅按 row type 查找，不再记录生成的 `.table` 名称。字段 `table` 因 SQL 标准保留字 `TABLE` 被拒绝，大小写一致处理；`schema` 在 SQL:2023 中非保留，command parser 使用 `nonReservedSymbol`，使这个名称也能直接用作字段。
@@ -52,6 +56,8 @@ SQL adapter 根据静态 row type 获取字段，物理 source 的名字可以�
 ## Relational lenses 提供的约束
 
 [Incremental Relational Lenses](https://arxiv.org/abs/1807.01948) 中的 select／merge、函数依赖和 join 删除策略决定了更新不能简单反向翻译 SELECT。此实现先保留显式 source key、FD、丢失信息的恢复策略和删除策略，再做 snapshot propagation。
+
+SQL 的 T301 涉及函数依赖，但不是任意 FD 的建表声明语法。schema 只从主键取得隐含依赖；额外 FD 用 `Source.withDependencies` 配置在 source 上，并随 source 进入 lens 的快照、读取校验和更新传播。这里不生成数据库约束或触发器，也不把 `track → rating` 错当成 `UNIQUE(track)`，后者会禁止同一 track 出现在多个 album 中。
 
 [Language-Integrated Updatable Views](https://arxiv.org/abs/2003.02191) 也强调可更新视图的限制与语言层检查。这里允许任意 Lean selection predicate，因此没有宣称能静态决定所有 predicate 的可更新性：目前使用 checked partial operations，失败返回错误，成功路径检查 PutGet。
 
@@ -78,6 +84,8 @@ SQL adapter 根据静态 row type 获取字段，物理 source 的名字可以�
 测试覆盖独立中端导入、跨模块元数据与函数规则、生成字段的类型错误、comprehension 扩展和 ASCII／Unicode 箭头、查询与 SQLite 对照、排序分页作用域、两层相关嵌套、分组、NULL、原生 SQL 函数复用、CTE、窗口、DML、lens FD 传播、快照冲突、受影响行数检查及整批事务回滚。
 
 Schema 测试覆盖跨模块 instance、可选的生成器类型标注、由 source／结果上下文推导行类型、局部表 instance 的覆盖与恢复、移除旧辅助定义、保留字检查，以及名为 `schema` 的字段经由 SQLite 查询和更新。
+
+SQL 风格 schema 测试覆盖列级／表级主键、复合键、无键源、空值约束冲突和生成的 DDL；额外 FD 测试检查无效快照被拒绝，以及 SQLite 更新仍向 selection 外的相关行传播。
 
 函数规则测试还覆盖导入后未激活、`open`／`open scoped`／`open ... in`、namespace 内激活、局部覆盖和退出后恢复、文件末尾仍有效的 local 规则不导出，以及全部标准函数的 SQLite 执行和字符长度的方言渲染。
 

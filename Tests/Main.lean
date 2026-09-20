@@ -92,7 +92,7 @@ def raiseAdults := update [ {p with age := p.age + 1} | p ← peopleView, p.age 
 def badSelection := update [ {p with age := 1} | p ← adultsView ]
 def renameBrief := update [ {p with name := p.name ++ "!"} | p ← briefView, p.id == 1 ]
 def renameTeams := update [ (pair.1, {pair.2 with label := pair.2.label ++ "!"}) | pair ← joinedView ]
-def raiseRating := update [ {t with rating := 9} | t ← (View.base (@table Track _)).select (·.album == 1), t.track == 5 ]
+def raiseRating := update [ {t with rating := 9} | t ← tracksView.select (·.album == 1), t.track == 5 ]
 
 private def insertRows (table : TableDef) (rows : Relation) : SQL.Statement :=
   .insert [table.name] table.names (.values (rows.map fun row => table.names.map fun n => .param ((row.lookup n).getD .null)))
@@ -123,7 +123,7 @@ def main : IO Unit := do
   let joined ← get (renameTeams.run database)
   check "join propagates shared dimension" ((← get ((View.base (@table Team _)).get.run joined.database)).map (·.label) == ["A!", "B!", "unreferenced"])
   let rated ← get (raiseRating.run database)
-  let ratedRows ← get ((View.base (@table Track _)).get.run rated.database)
+  let ratedRows ← get (tracksView.get.run rated.database)
   check "selection revises hidden FD dependents" ((ratedRows.filter (·.track == 5)).all (·.rating == 9))
   check "self-join policy is explicit" (((peopleView.join peopleView).get.run database).toOption.isNone)
   let duplicate := people ++ [people.head!]
@@ -225,6 +225,9 @@ def main : IO Unit := do
   let _ ← get (← Compiler.applyUpdate connection raiseAdults database)
   let ages ← get (← connection.execute [sql! [ SELECT age FROM people ORDER BY id]])
   check "lens changes execute as SQL" (ages[0]!.rows == [[.int 31], [.int 16], [.int 26]])
+  let _ ← get (← Compiler.executeUpdate connection raiseRating)
+  let ratings ← get (← connection.execute [sql! [SELECT rating FROM tracks WHERE track = 5 ORDER BY album]])
+  check "explicit source FD propagates to hidden SQL rows" (ratings[0]!.rows == [[.int 9], [.int 9]])
   let rollback ← connection.execute [
     sql! [ UPDATE people SET age = 100 WHERE id = 1],
     sql! [ INSERT INTO people (id, name, age, teamId, note) VALUES (1, "duplicate", 0, 10, NULL)]]

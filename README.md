@@ -19,9 +19,11 @@ import LeanRel
 open LeanRel LeanRel.Frontend
 open scoped LeanRel.SQL
 
-schema Person "people" {
-  id : Int, name : String, age : Int
-} key [id]
+schema Person "people" (
+  id Int PRIMARY KEY,
+  name String NOT NULL,
+  age Int
+)
 ```
 
 此 command 生成：
@@ -31,21 +33,31 @@ schema Person "people" {
 - 通用字段容器 `Person.Columns F`，字段分别为 `F Int`、`F String` 等；它本身与 SQL 无关。
 - 跨模块持久化的编译期元数据，供 elaborator 使用。
 
-字段类型是 Lean term，可用类型别名，也可以扩展 `ColumnType`／`Codec`。内置 `Int`、`Float`、`Bool`、`String`、`Array UInt8` 和可空的 `Option` 类型。`key []` 可表示无键查询源；可更新的基本 view 要求键。
+声明主体采用 SQL 风格的括号、逗号和列约束，字段类型保留任意 Lean term，可用类型别名，也可以扩展 `ColumnType`／`Codec`。内置 `Int`、`Float`、`Bool`、`String`、`Array UInt8` 和可空的 `Option` 类型。空值性由 Lean 类型决定：`String` 非空，`Option String` 可空；`NOT NULL` 可显式写出，但不能与可空类型同时使用。
+
+主键可以写在单列后，也可以写成表级 `PRIMARY KEY (a, b)`。一个 schema 只能声明一个主键，主键列不能可空。省略 `PRIMARY KEY` 即得到无键查询源；可更新的基本 view 要求键。
 
 `table` 是 `HasTable.table` 的导出名称，行类型由上下文推导；需要显式指定时写 `@table Person _`，其中 `_` 仍由 Lean 合成 instance。`HasTable.schema Person` 从同一个 instance 取得 `TableDef`。schema 不再生成 `Person.table` 或 `Person.schema` 辅助定义；局部 `HasTable Person` instance 可以替换默认 source。
 
 字段名 `table` 按 SQL 标准保留字 `TABLE` 检查，不区分大小写。`schema` 在 SQL:2023 中不是保留字，可以直接声明为字段；参见 [SQL 标准关键字对照](https://www.postgresql.org/docs/current/sql-keywords-appendix.html)。
 
-函数依赖也在 schema 中声明：
+一般函数依赖通过普通 source 组合子配置，供 relational lens 检查和传播：
 
 ```lean
-schema Track "tracks" {
-  album : Int, track : Int, rating : Int
-} key [album, track] dependencies { [track] -> [rating] }
+schema Track "tracks" (
+  album Int, track Int, rating Int,
+  PRIMARY KEY (album, track)
+)
+
+def tracksSource := (@table Track _).withDependencies [⟨["track"], ["rating"]⟩]
+def tracksView := View.base tracksSource
 ```
 
-`HasTable.schema Person` 是普通运行时值，SQL 建表使用 `SQL.CreateTable.ofTable (HasTable.schema Person)`。一般函数依赖由 lens 验证，不自动变成数据库约束或触发器。
+SQL 标准包含函数依赖概念，例如 T301 用于判断分组查询是否合法，但没有这里原来的 `dependencies { … }` 建表子句；因此 schema 已移除该语法。主键隐含的函数依赖仍自动取得，额外依赖由 `Source.withDependencies` 追加。参考 [MySQL 对标准 T301 的说明](https://dev.mysql.com/doc/dev/mysql-server/latest/group__AGGREGATE__CHECKS.html)及 [CREATE TABLE 语法](https://www.postgresql.org/docs/current/sql-createtable.html)。
+
+`HasTable.schema Person` 是普通运行时值，SQL 建表使用 `SQL.CreateTable.ofTable (HasTable.schema Person)`。一般函数依赖由原生查询和 lens 验证，不自动变成数据库约束或触发器。
+
+SQL 类型支持尚未完整：`DECIMAL`、`DATE`、`TIMESTAMP` 等已有中端 AST，并不意味着已有相应的 typed schema／codec。具体覆盖范围、整数宽度和复杂类型的缺口见 [SQL 类型支持](docs/sql-types.md)。
 
 ## 丰富前端：Lean term 构成的 comprehension
 
