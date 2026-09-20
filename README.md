@@ -1,22 +1,21 @@
 # lean-rel
 
-Lean 原生 comprehension 查询／更新语言，以及可以独立使用的 SQL 中端。
+Native Lean queries and updates, with a SQL middle end that can also be used directly. The frontend is independent of SQL, and the SQL middle end connects to databases through a backend interface.
 
-这是一个可执行的实现，接口仍在演化。前端不依赖 SQL；SQL 中端不依赖具体数据库。SQLite 执行使用 [leanprover/leansqlite](https://github.com/leanprover/leansqlite/tree/v4.34.0) 的原生绑定，依赖已锁定到与 Lean 4.34.0 对应的版本。
+## Quick start
+
+The project uses Lean 4.34.0, selected by `lean-toolchain`. A C compiler is required: [leanprover/leansqlite](https://github.com/leanprover/leansqlite/tree/v4.34.0) builds its bundled SQLite. From the repository root:
 
 ```sh
 lake build
-lake exe lean-rel
-lake exe lean-rel-tests
 ```
 
-构建需要 C 编译器；leansqlite 会编译其自带的 SQLite。[Main.lean](Main.lean) 是完整示例，[Tests/Main.lean](Tests/Main.lean) 执行真实数据库测试。
-
-## Schema：声明一次，同时得到原生类型和元数据
+Save the following as `QuickStart.lean` in the repository root. It declares a schema, inserts records, runs a comprehension as SQL, and updates a view:
 
 ```lean
 import LeanRel
-open LeanRel LeanRel.Frontend
+
+open LeanRel LeanRel.Frontend LeanRel.SQL.Standard
 open scoped LeanRel.SQL
 
 schema Person "people" (
@@ -24,24 +23,67 @@ schema Person "people" (
   name String NOT NULL,
   age Int
 )
+
+def adultNames (minimum : Int) := sql% [
+  p.name.toLower | p : Person ← table, p.age ≥ minimum]
+
+def increaseAges := update [
+  {p with age := p.age + 1} | p : Person ← View.base table, p.age ≥ 18]
+
+def main : IO Unit := do
+  let connection ← Backend.SQLite.connect ":memory:"
+  let create ← IO.ofExcept (SQL.CreateTable.ofTable (HasTable.schema Person))
+  let rows : List Person := [⟨1, "Ada", 30⟩, ⟨2, "Bo", 16⟩, ⟨3, "Chen", 25⟩]
+  let insert ← IO.ofExcept sql! [INSERT INTO @table Person _ VALUES rows]
+  let _ ← IO.ofExcept (← connection.execute [.createTable create, insert])
+
+  let names ← IO.ofExcept (← connection.query (α := String) (adultNames 18))
+  IO.println s!"Adult names: {repr names}"
+
+  let _ ← IO.ofExcept (← Compiler.executeUpdate connection increaseAges)
+  let after ← IO.ofExcept (← (sql! [
+    SELECT (p.name, p.age) FROM p IN @table Person _ ORDER BY [p.id.asc]
+  ]).fetch connection)
+  IO.println s!"After update: {repr after}"
+
+#eval main
 ```
 
-此 command 生成：
+Run it with:
 
-- 普通结构 `Person`，可以直接使用 `p.age`、模式匹配和 `{p with age := ...}`。
-- `Codec Person` 和 `HasTable Person` instance；普通函数 `table` 从 instance 取得 `Source Person`。
-- 通用字段容器 `Person.Columns F`，字段分别为 `F Int`、`F String` 等；它本身与 SQL 无关。
-- 跨模块持久化的编译期元数据，供 elaborator 使用。
+```sh
+lake lean QuickStart.lean
+```
 
-声明主体采用 SQL 风格的括号、逗号和列约束，字段类型保留任意 Lean term，可用类型别名，也可以扩展 `ColumnType`／`Codec`。内置 `Int`、`Float`、`Bool`、`String`、`Array UInt8` 和可空的 `Option` 类型。空值性由 Lean 类型决定：`String` 非空，`Option String` 可空；`NOT NULL` 可显式写出，但不能与可空类型同时使用。
+The standard translation namespace makes `String.toLower` compile to SQL `LOWER`. `query%` builds requests for the native reference interpreter, `sql%` compiles frontend queries to SQL, and `sql!` constructs SQL directly.
 
-主键可以写在单列后，也可以写成表级 `PRIMARY KEY (a, b)`。一个 schema 只能声明一个主键，主键列不能可空。省略 `PRIMARY KEY` 即得到无键查询源；可更新的基本 view 要求键。
+The repository also includes a [demo](Main.lean) and [integration tests](Tests/Main.lean) that execute against SQLite:
 
-`table` 是 `HasTable.table` 的导出名称，行类型由上下文推导；需要显式指定时写 `@table Person _`，其中 `_` 仍由 Lean 合成 instance。`HasTable.schema Person` 从同一个 instance 取得 `TableDef`。schema 不再生成 `Person.table` 或 `Person.schema` 辅助定义；局部 `HasTable Person` instance 可以替换默认 source。
+```sh
+lake exe lean-rel
+lake exe lean-rel-tests
+```
 
-字段名 `table` 按 SQL 标准保留字 `TABLE` 检查，不区分大小写。`schema` 在 SQL:2023 中不是保留字，可以直接声明为字段；参见 [SQL 标准关键字对照](https://www.postgresql.org/docs/current/sql-keywords-appendix.html)。
+The examples below continue from the imports and `Person` declaration in the quick start. Standard translations are enabled by default in these examples. The library API is still evolving.
 
-一般函数依赖通过普通 source 组合子配置，供 relational lens 检查和传播：
+## Schema: Lean records and metadata from one declaration
+
+The `schema Person` command above generates:
+
+- An ordinary `Person` structure, supporting field access, pattern matching, and record updates such as `{p with age := ...}`.
+- `Codec Person` and `HasTable Person` instances. The ordinary function `table` obtains the default `Source Person` from its instance.
+- A field container `Person.Columns F`, with fields such as `F Int` and `F String`. It is independent of SQL.
+- Persistent elaborator metadata that remains available after importing a compiled module.
+
+Declarations use SQL-style column lists and constraints, while field types are arbitrary Lean terms. Type aliases and custom `ColumnType`/`Codec` instances are supported. Built-in column mappings include `Int`, `Float`, `Bool`, `String`, `Array UInt8`, and `Option` of these types.
+
+Nullability follows the Lean type: `String` is non-nullable, and `Option String` is nullable. An explicit `NOT NULL` is optional for non-nullable types and is rejected on nullable types. A primary key can follow a single column or use a table constraint such as `PRIMARY KEY (a, b)`. Only one primary key is allowed, and its columns must be non-nullable. Omitting it creates a source without a key; base views require a key for lens updates.
+
+`table` is the exported name of `HasTable.table`. Its row type can be inferred from context; use `@table Person _` when it must be explicit. Lean synthesizes the instance argument represented by `_`. `HasTable.schema Person` obtains the `TableDef` from the same instance. A local `HasTable Person` instance can replace the default source without adding `Person.table` or `Person.schema` declarations.
+
+The field name `table` is rejected, ignoring case, because `TABLE` is a reserved SQL word. `schema` is non-reserved in SQL:2023 and can be used as a field name. See the [SQL keyword comparison](https://www.postgresql.org/docs/current/sql-keywords-appendix.html).
+
+Additional functional dependencies are configured on a source for relational lens validation and propagation:
 
 ```lean
 schema Track "tracks" (
@@ -53,13 +95,13 @@ def tracksSource := (@table Track _).withDependencies [⟨["track"], ["rating"]�
 def tracksView := View.base tracksSource
 ```
 
-SQL 标准包含函数依赖概念，例如 T301 用于判断分组查询是否合法，但没有这里原来的 `dependencies { … }` 建表子句；因此 schema 已移除该语法。主键隐含的函数依赖仍自动取得，额外依赖由 `Source.withDependencies` 追加。参考 [MySQL 对标准 T301 的说明](https://dev.mysql.com/doc/dev/mysql-server/latest/group__AGGREGATE__CHECKS.html)及 [CREATE TABLE 语法](https://www.postgresql.org/docs/current/sql-createtable.html)。
+SQL includes functional dependencies, for example in feature T301 for grouped queries, but does not have this library's former `dependencies { ... }` table declaration clause. Dependencies implied by the primary key are derived automatically; `Source.withDependencies` adds further dependencies. See [MySQL's description of T301](https://dev.mysql.com/doc/dev/mysql-server/latest/group__AGGREGATE__CHECKS.html) and the [CREATE TABLE grammar](https://www.postgresql.org/docs/current/sql-createtable.html).
 
-`HasTable.schema Person` 是普通运行时值，SQL 建表使用 `SQL.CreateTable.ofTable (HasTable.schema Person)`。一般函数依赖由原生查询和 lens 验证，不自动变成数据库约束或触发器。
+`HasTable.schema Person` is also an ordinary runtime value. `SQL.CreateTable.ofTable (HasTable.schema Person)` builds the SQL table definition. Additional functional dependencies are checked by native queries and lenses; they do not generate database constraints or triggers.
 
-SQL 类型支持尚未完整：`DECIMAL`、`DATE`、`TIMESTAMP` 等已有中端 AST，并不意味着已有相应的 typed schema／codec。具体覆盖范围、整数宽度和复杂类型的缺口见 [SQL 类型支持](docs/sql-types.md)。
+SQL type support is incomplete. Having `DECIMAL`, `DATE`, or `TIMESTAMP` in the middle end's AST does not yet provide the corresponding typed schema and codec. The [SQL type coverage notes](docs/sql-types.md) document these gaps and the current numeric width mappings.
 
-## 丰富前端：Lean term 构成的 comprehension
+## Comprehensions with Lean terms
 
 ```lean
 def adults (minimum : Int) := query% [
@@ -77,22 +119,22 @@ def adultsSQL (minimum : Int) := sql% [
   (p.name, p.age + 1) | p : Person ← table, p.age ≥ minimum]
 ```
 
-生成器接受 `Source α`、`Query α`、普通 `List α` 和 `View α`。`←` 与 `<-` 使用同一个 Lean parser。结果、数据源、`let` 绑定、谓词都是原生 term；函数、闭包、`match`、记录和已有宏都由 Lean elaborator 处理。
+Generators accept `Source α`, `Query α`, ordinary `List α`, and `View α`. Both `←` and `<-` use Lean's arrow parser. Results, sources, `let` bindings, and predicates are native terms: Lean elaborates functions, closures, `match`, records, and existing macros.
 
-生成器的 `: Person` 是可选的。`p : Person ← table` 把行类型传给数据源；源或结果上下文已经提供类型时，可以省略标注，例如：
+The generator annotation `: Person` is optional. It can supply the row type to a polymorphic source, as in `p : Person ← table`. When the source or result context already determines the type, it can be omitted:
 
 ```lean
 def allPeople : Query Person := query% [p | p ← table]
 def knownSource := query% [p.name | p ← @table Person _]
 ```
 
-标注展开为普通 Lean lambda 的参数类型，推导使用 Lean 自身的 elaborator。块语法和更新 comprehension 也支持相同的可选标注。
+Annotations become ordinary Lean lambda parameter types. Type inference is handled by Lean itself. Block queries and update comprehensions support the same optional annotations.
 
-`query% [...]` 产生原生 `Query α`；`sql% [...]` 使用相同的 comprehension，直接生成独立的 `SQL.Query`。两个入口都可直接作为函数实参，`query` 本身仍可用作普通标识符。已有查询定义或组合子表达式也可通过 `sql% adults minimum` 复用并下推。
+`query% [...]` produces a native `Query α`. `sql% [...]` consumes the same comprehension syntax and produces an independent `SQL.Query`. Both can appear directly as function arguments, and `query` remains available as an ordinary identifier. Existing queries and combinator expressions can also be compiled with forms such as `sql% adults minimum`.
 
-`Query α` 是一个 baked 请求，`run : Database → Except String (List α)` 给出参考解释器。这里没有另造一套封闭的前端表达式 AST。SQL 适配器在 elaboration 时消费可见的 Lean 程序；捕获的参数仍在运行时计算、绑定。
+`Query α` stores an executable request. Its `run : Database → Except String (List α)` supplies the reference semantics. Query bodies remain Lean programs, without a separate closed AST of frontend scalar expressions. The SQL adapter inspects the elaborated program; captured parameters are still evaluated and bound at runtime.
 
-`Query` 还提供 `map`、`filter`、`unionAll`、`distinct`、`sortBy`、`take`、`drop`、`count`、`sum`、`any`、`all`、`collect` 和 `groupBy`。例如：
+Query combinators include `map`, `filter`, `unionAll`, `distinct`, `sortBy`, `take`, `drop`, `count`, `sum`, `any`, `all`, `collect`, and `groupBy`:
 
 ```lean
 def grouped := (Query.scan (@table Person _)).groupBy (fun p => p.age)
@@ -101,9 +143,9 @@ def groupedSQL := sql% grouped
 def names := (query% [p.name | p : Person ← table]).collect
 ```
 
-`collect` 产生一个集合值，支持相关嵌套；SQL 适配器目前用嵌套集合表达式及 JSON 聚合／解码实现，没有逐行发查询。
+`collect` produces a collection value and supports correlated nested queries. The current SQL adapter uses nested collection expressions with JSON aggregation and decoding to retrieve the nested result in one query.
 
-Comprehension 的 clause 也可扩展，不必改中心 AST：
+Comprehension clauses can be extended through macros:
 
 ```lean
 syntax "unless " term : queryQualifier
@@ -112,9 +154,11 @@ macro_rules
     `(if $p then Query.empty else $body)
 ```
 
-块语法同样提供 `query% { for p : Person in table; where ...; yield ... }` 和 `sql% { ... }`，共用 `queryBody%` 扩展点。
+The block forms `query% { for p : Person in table; where ...; yield ... }` and `sql% { ... }` share the `queryBody%` extension point.
 
-常用标量函数翻译随 `import LeanRel` 加载，全部登记在 `LeanRel.SQL.Standard` 的 scoped 规则中。打开 namespace 后启用：
+## Standard and custom scalar translations
+
+`import LeanRel` loads the scoped rules in `LeanRel.SQL.Standard`. The quick start opens that namespace, enabling common scalar translations throughout the examples:
 
 ```lean
 open LeanRel.SQL.Standard
@@ -122,18 +166,18 @@ open LeanRel.SQL.Standard
 def normalizedNames := sql% [(p.name.toLower, p.name.length) | p : Person ← table]
 ```
 
-也可以用 `open scoped LeanRel.SQL.Standard`，或用 `open LeanRel.SQL.Standard in` 限定到单个声明。仅仅 `import LeanRel` 不激活这些翻译，依赖模块中的 `open` 也不会传播给 importer。
+You can also use `open scoped LeanRel.SQL.Standard`, or restrict activation to one declaration with `open LeanRel.SQL.Standard in`. Importing `LeanRel` alone does not activate the rules, and an imported module's `open` does not propagate to its importers.
 
-| Lean 函数 | SQL 翻译 |
+| Lean function | SQL translation |
 | --- | --- |
 | `String.toLower` / `String.toUpper` | `LOWER` / `UPPER` |
-| `String.append`（`++`） | `CONCAT` |
-| `String.length` | `CHAR_LENGTH`，SQLite 渲染为 `LENGTH` |
+| `String.append` (`++`) | `CONCAT` |
+| `String.length` | `CHAR_LENGTH`, rendered as `LENGTH` on SQLite |
 | `Int.natAbs` / `Float.abs` | `ABS` |
 | `Int.sign` | `SIGN` |
 | `Option.getD` | `COALESCE` |
 
-自定义翻译同样使用 Lean 自带的 attribute 作用域语法：
+Custom translations use Lean's ordinary attribute scope syntax:
 
 ```lean
 namespace MyTranslations
@@ -143,7 +187,7 @@ attribute [scoped sql_function "LOWER" 1] String.toLower
 def lowerName (name : String) : String := name.toLower
 end MyTranslations
 
-open MyTranslations in
+open LeanRel.SQL.Standard MyTranslations in
 def customNames := sql% [lowerName p.name | p : Person ← table]
 
 section
@@ -152,13 +196,15 @@ def localNames := sql% [p.name.toLower | p : Person ← table]
 end
 ```
 
-`scoped` 规则通过 `.olean` 持久化，在声明它的 namespace 内及打开该 namespace 的作用域中生效。`local` 遵循 Lean 的 section／namespace 边界；顶层声明持续到文件末尾，不导出。省略修饰词的 `[sql_function "LOWER" 1]` 则登记全局规则，导入后立即生效。同一函数以后登记或激活的规则为准，退出局部作用域时恢复外层规则。
+Scoped rules persist through `.olean` files and activate inside their namespace or when it is opened. Local rules follow Lean's section and namespace boundaries; a rule declared at the top level lasts until the end of the file and is not exported. Without a scope modifier, `[sql_function "LOWER" 1]` registers a global rule that activates on import. The most recently registered or activated rule for a function takes precedence, and leaving a local scope restores the outer rules.
 
-数值参数指定传给 SQL 函数的末尾实参数量，不包含前面的隐式类型参数。规则只影响 SQL 翻译，原生 `query%` 仍调用 Lean 函数。标准集合采用数据库标量语义：Lean 4.34.0 的大小写转换仅处理 ASCII，数据库可能按 locale 转换更多字符；SQLite 的 `LENGTH` 在 NUL 字符处停止，数值计算受数据库范围限制。参见 [Lean 的字符串实现](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Data/String/Modify.lean)、[SQLite 标量函数](https://www.sqlite.org/lang_corefunc.html)和 [PostgreSQL 字符串函数](https://www.postgresql.org/docs/current/functions-string.html)。
+The numeric argument specifies how many trailing function arguments are passed to SQL, excluding earlier implicit type parameters. The rules affect SQL compilation; native `query%` evaluation still calls the Lean function.
 
-## SQL 中端：复用 Lean 定义
+Standard translations opt into database scalar semantics. Lean 4.34.0 case conversion handles ASCII, while a database may convert more characters according to its locale. SQLite's `LENGTH` stops at an embedded NUL, and numeric operations retain database limits. See [Lean's string implementation](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Data/String/Modify.lean), [SQLite scalar functions](https://www.sqlite.org/lang_corefunc.html), and [PostgreSQL string functions](https://www.postgresql.org/docs/current/functions-string.html).
 
-中端不必经由前端编译器。下面的 `sql!` 直接构造 SQL，并让字段类型参与 Lean elaboration：
+## The SQL middle end: reusable Lean definitions
+
+The middle end can be used independently of the frontend compiler. `sql!` constructs SQL directly, with column types participating in Lean elaboration:
 
 ```lean
 def eligible (minimum : Int) (p : Person.Columns SQL.Scalar) : SQL.Scalar Bool :=
@@ -171,11 +217,11 @@ def direct (minimum : Int) := sql! [
   ORDER BY [p.id.asc]]
 ```
 
-`FROM p IN source` 绑定 schema 自动生成的字段容器。用户直接写字段访问、普通函数、元组、记录更新；不重复声明列名与列类型。`direct` 的结果类型为 `SQL.Plan (String × Int)`，通过 `.fetch connection` 执行并解码；`.query`、`.statement` 可以取得公共 AST，也可在期望这些类型的位置自动转换。
+`FROM p IN source` binds the generated field container. Field access, ordinary functions, tuples, and record updates reuse the schema's column names and types. `direct` has type `SQL.Plan (String × Int)`; `.fetch connection` executes it and decodes the result. `.query` and `.statement` expose the public AST, with coercions available when those types are expected.
 
-算术复用 Lean 的 `+ - * /`，字符串拼接复用 `++`。比较和逻辑使用 `==. !=. <. <=. >. >=. &&. ||.`，因为它们构造 SQL 表达式，并不返回 Lean 的 `Bool`／`Prop`。可空比较的结果保留 `Option Bool`；`.isNull`／`.isNotNull`／`.coalesce` 提供显式 NULL 操作。
+Arithmetic uses Lean's `+ - * /`, and string concatenation uses `++`. Comparisons and logical operations use `==. !=. <. <=. >. >=. &&. ||.` to construct SQL expressions. Nullable comparisons retain `Option Bool`; `.isNull`, `.isNotNull`, and `.coalesce` provide explicit NULL operations.
 
-查询支持 typed source 的 `JOIN ... IN ... ON ...`、原生 term 投影、谓词、分组、排序和分页。谓词、投影、排序键和查询定义都可以放进普通函数复用。相关子查询用 `.exists_`；组合时共享别名生成器。
+Queries support typed `JOIN ... IN ... ON ...` sources, Lean projections and predicates, grouping, ordering, and pagination. Predicates, projections, ordering keys, and queries can be ordinary reusable definitions. Correlated subqueries use `.exists_`; composition shares an alias supply.
 
 ```lean
 def birthdays := sql! [
@@ -185,22 +231,22 @@ def birthdays := sql! [
 
 def removeChildren := sql! [DELETE FROM p IN @table Person _ WHERE p.age <. 18]
 
--- rows : List Person；返回 Except String SQL.Statement，校验编码和键。
+-- Returns Except String SQL.Statement, checking record encoding and keys.
 def insertPeople (rows : List Person) := sql! [INSERT INTO @table Person _ VALUES rows]
 ```
 
-插入复用完整 Lean 记录和 schema 顺序；更新从记录更新生成有变化的赋值。它们直接生成 SQL DML，不经过 relational lens。
+Inserts reuse complete Lean records and schema column order. Updates derive changed assignments from record updates. These operations produce SQL DML directly, without relational lens propagation.
 
-`sql! [...]` 使用 `syntax:max`，作为实参时不需要额外括号：
+`sql! [...]` can appear as a function argument without extra parentheses:
 
 ```lean
 def prepared := SQL.render .sqlite sql! [
   SELECT p.name FROM p IN @table Person _ WHERE eligible 18 p]
 ```
 
-## SQL 中端：接近 SQL 的完整语句构造入口
+## The SQL middle end: SQL statement syntax
 
-还可以直接表达 SQL 特有的结构，并拼接已有 term：
+SQL-specific constructs can also be expressed directly and composed with existing terms:
 
 ```lean
 def minimumAge : Int := 18
@@ -211,15 +257,15 @@ def statement := sql! [
   WITH grown AS (@{queryPart}) SELECT name FROM grown ORDER BY name]
 ```
 
-这里 `sql!` 返回 `SQL.Statement`，`sql_query!` 返回 `SQL.Query`，`sql_expr!` 返回 `SQL.Expr`。`${term}` 编码为绑定参数；`@{term}` 拼接对应种类的 AST，FROM 位置也可拼接 `TableDef`。
+In this form, `sql!` returns `SQL.Statement`, `sql_query!` returns `SQL.Query`, and `sql_expr!` returns `SQL.Expr`. `${term}` encodes a bound parameter. `@{term}` splices the corresponding kind of AST; a `FROM` source can also splice a `TableDef`.
 
-当前语法覆盖 SELECT／DISTINCT、JOIN 与外连接、WHERE、GROUP BY／HAVING、ORDER BY、分页、集合运算、相关子查询、CTE／递归 CTE、CASE、CAST、IN／EXISTS、窗口表达式、INSERT VALUES／SELECT、UPDATE、DELETE、RETURNING、建表及约束、索引、视图、删表和事务控制 AST。函数调用可直接使用 SQL 函数名，不需要预先穷举函数集合。
+The syntax covers SELECT/DISTINCT, joins and outer joins, WHERE, GROUP BY/HAVING, ordering, pagination, set operations, correlated subqueries, CTEs and recursive CTEs, CASE, CAST, IN/EXISTS, window expressions, INSERT VALUES/SELECT, UPDATE, DELETE, RETURNING, table definitions and constraints, indexes, views, DROP TABLE, and transaction control ASTs. SQL function names can be used directly without registering each function in a fixed vocabulary.
 
-字符串使用 Lean 的双引号字符串，标识符使用 Lean identifier。动态值应使用插值；DDL 中无法绑定的常量由各方言单独转义。此入口保留 SQL 的结构，不为原始列名、分组合法性提供完整的静态证明。高级特性也可直接组合 AST。
+Strings use Lean's double-quoted literals, and identifiers use Lean identifiers. Dynamic values should use parameter interpolation. DDL constants that cannot be bound are escaped by the renderer. This syntax preserves SQL structure, but does not statically prove that raw column names or grouping rules are valid. The public AST is also available for direct construction.
 
-仅使用中端可以只导入 `LeanRel.Schema` 和 `LeanRel.SQL.NativeSyntax`；[Tests/MiddleOnly.lean](Tests/MiddleOnly.lean) 验证了这一依赖边界，并检查字段／类型错误。
+Applications using only the middle end can import `LeanRel.Schema` and `LeanRel.SQL.NativeSyntax`. [Tests/MiddleOnly.lean](Tests/MiddleOnly.lean) checks this dependency boundary and field/type errors.
 
-## Relational lenses 与实际更新
+## Relational lenses and updates
 
 ```lean
 def people := View.base (@table Person _)
@@ -228,35 +274,53 @@ def birthday := update [
   {p with age := p.age + 1} | p ← people, p.age ≥ 18]
 ```
 
-`update` 中的 guard 只选择要修改的行，其余行保留。也可以直接绑定 `p : Person ← View.base table`，由标注确定默认表。当前一次 comprehension 绑定一个 view；多表更新先组合 view。
+An update guard selects rows to change and preserves the others. A generator can also use `p : Person ← View.base table` directly. Each update comprehension currently binds one view; compose views first for updates involving multiple tables.
 
-提供基本表、selection、保留键的 projection、rename、带删除策略的 natural join。Projection 从旧数据恢复隐藏字段，新键必须提供默认值。Selection 根据函数依赖修订隐藏行。Join 要求共享字段能决定右侧，默认删除左侧，可显式选择 `.right`／`.both`；来源重叠的 self-join 更新被拒绝。
+Views support base tables, selection, projection that retains the key, renaming, and natural joins with deletion policies. Projection recovers hidden fields from existing rows and requires defaults for new keys. Selection uses functional dependencies to revise hidden rows. A join requires shared fields to determine the right side; deletion defaults to the left side and can use `.right` or `.both`. Updates through views with overlapping source ownership are rejected.
 
 ```lean
--- 以下放在 IO do 中：
+-- Inside an IO do block:
 -- let connection ← Backend.SQLite.connect ":memory:"
 -- let _ ← IO.ofExcept (← Compiler.executeUpdate connection birthday)
 ```
 
-`Compiler.executeUpdate` 读取所有相关 source 的一致快照，执行纯 Lean 更新逻辑，生成按键定位的 DML，并在一个写事务中检查读取快照和受影响行数后提交。快照变化，包括并发插入，返回冲突；出错回滚整个 batch。也可以使用 `request.run database` 查看变更，再用 `Compiler.applyUpdate` 提交指定快照。
+`Compiler.executeUpdate` reads a consistent snapshot of the participating sources, computes the update in Lean, and generates DML that identifies rows by their keys. Before committing, a write transaction verifies the snapshot and expected affected row counts. Snapshot changes, including concurrent inserts, return a conflict; failures roll back the whole batch. Use `request.run database` to inspect changes locally, or `Compiler.applyUpdate` to apply an update against a supplied snapshot.
 
-这是使用运行时检查的部分 lens 实现：拒绝违反键／FD／selection predicate 的修改，并检查成功传播的 PutGet。它不是对任意 Lean 谓词自动推导出的 total lens。`LeanRel/Lens/Laws.lean` 证明了抽象 total lens 的恒等与复合规律；该证明不等于具体关系算法已经全部形式化证明。
+This is a partial lens implementation with runtime checks. It rejects changes that violate keys, functional dependencies, or selection predicates, and checks PutGet after successful propagation. Arbitrary Lean predicates do not automatically yield total lenses. [LeanRel/Lens/Laws.lean](LeanRel/Lens/Laws.lean) proves identity and composition laws for abstract total lenses; it does not prove all the concrete relational algorithms correct.
 
-## 后端及当前边界
+## Backend interface
 
-`SQL.Connection` 由方言 renderer 和原子 batch runner 构成。SQLite 后端直接使用 leansqlite，复用原生连接；`:memory:` 在多次调用之间保留数据。连接内按整个事务加锁，lens 写事务使用 `BEGIN IMMEDIATE`。`Connection.execute` 自动管理事务，因此不要把 BEGIN／COMMIT 再作为 batch 中的语句执行。
+Backends implement [`SQL.Connection`](LeanRel/SQL/Execute.lean). It accepts two functions:
 
-PostgreSQL、SQLite、MySQL 有独立的参数占位符、引用／转义及能力检查。目前真实执行测试使用 SQLite；其他两种方言已测试渲染，尚未提供连接驱动或实际服务器测试。
+- `render : SQL.Statement → Except String SQL.Prepared` translates the public SQL AST to SQL text and bound parameters, or reports an unsupported operation.
+- `run : SQL.Batch → IO (Except String (List SQL.ResultSet))` executes the batch atomically, including snapshot checks and expected affected row counts.
 
-当前需要明确保留的限制：
+A backend can supply its own implementations directly:
 
-- 原生前端可运行任意合法的纯 Lean term，但 SQL 编译并非 Lean 通用求值器。可以展开的函数和已注册规则才能下推；黑盒运行时 `Query` 闭包不能重新反射成 SQL。
-- SQL 适配器目前翻译 schema source、投影／过滤／join、集合并、排序分页、聚合、分组和嵌套集合。普通 List 生成器、任意 List 消费函数、直接对 `View.get` 的编译以及部分需要 LATERAL 的相关组合尚未实现；它们仍可在参考解释器执行。
-- `[sql_function "SQL_NAME" n]` 可扩展标量函数规则。声明者负责保证语义对应；`LeanRel.SQL.Standard` 的适用边界见上文。
-- 编译器检查算术／比较实例，`BEq`、去重和分组需要对应的 `LawfulBEq`；排序目前接受标准 Int／Nat／String／Bool 的 `Ord`。自定义实例不会被默默替换为 SQL 默认运算。
-- 未显式排序的 SQL 查询不保证与内存 List 的遍历顺序一致。查询保留重复项；lens 使用有键集合语义。
-- Lean Int 没有位数上限，数据库数值、字符串排序、NULL 运算有各自语义。SQLite 绑定检查整数范围；SQL 算术不是无限精度 Lean Int 的完整实现。
-- 嵌套集合目前经由 JSON 传递，不支持其中的 BLOB；MySQL 的有序嵌套集合会明确报能力错误。没有实现 DSH 的完整 shredding／优化流水线。
-- 尚未覆盖 SQL 标准和各数据库扩展的全集，也没有迁移系统、增量 lens 优化或整个 SQL 编译器的语义保持证明。
+```lean
+def customConnection
+    (render : SQL.Statement → Except String SQL.Prepared)
+    (run : SQL.Batch → IO (Except String (List SQL.ResultSet))) : SQL.Connection :=
+  { render, run }
+```
 
-设计取舍和研究对应见 [docs/design.md](docs/design.md)。
+Query execution and lens updates use these functions. `SQL.Connection` does not require a backend name or a `Dialect` value. A new database driver can provide a renderer and batch runner without modifying the frontend or query compiler. Its runner must enforce the transaction and isolation contract described by `SQL.Batch`.
+
+The shared `SQL.render` helper currently uses a closed `SQL.Dialect` enum containing SQLite, PostgreSQL, and MySQL. These are the bundled renderers, not a restriction on which backends can implement `SQL.Connection`. A custom backend can use a separate renderer. Extending the shared renderer to another dialect currently requires changing its implementation; its dialect rules are not yet an independently extensible interface.
+
+SQLite execution uses native leansqlite bindings and a persistent connection, including for `:memory:` databases. A mutex serializes whole transactions, and lens writes use `BEGIN IMMEDIATE`. `Connection.execute` manages transactions, so transaction control statements should not be included in its batches.
+
+SQLite has a connection driver and integration tests. PostgreSQL and MySQL currently have rendering tests, but no bundled connection drivers or live server tests.
+
+## Current limitations
+
+- Native queries can evaluate arbitrary well-typed pure Lean terms. SQL compilation supports terms it can unfold or translate through registered rules; it cannot reflect an opaque runtime `Query` closure back into SQL.
+- The SQL adapter handles schema sources, projection, filtering, joins, union, ordering and pagination, aggregates, grouping, and nested collections. Ordinary `List` generators, arbitrary list consumers, direct compilation of `View.get`, and some correlated combinations requiring LATERAL are not yet supported. The reference interpreter can still evaluate them.
+- Custom `[sql_function "SQL_NAME" n]` rules are responsible for preserving the intended semantics. The standard translations have the database behavior described above.
+- The compiler checks arithmetic and comparison instances. Equality, deduplication, and grouping require corresponding `LawfulBEq` instances; ordering currently accepts standard `Ord` instances for Int, Nat, String, and Bool. Custom instances are not silently replaced by SQL defaults.
+- SQL queries without explicit ordering need not follow native list traversal order. Queries preserve duplicates; lenses use keyed set semantics.
+- Lean `Int` is unbounded. Database numbers, string ordering, and NULL have their own semantics. SQLite bindings check integer range; SQL arithmetic does not provide arbitrary-precision Lean integer semantics.
+- Nested collections currently travel as JSON and do not support BLOB elements. Ordered nested collections are rejected on MySQL. The implementation does not yet have DSH's full shredding and optimization pipeline.
+- SQL type and dialect coverage is incomplete. There is no migration system, incremental lens optimizer, or proof of semantic preservation for the entire SQL compiler.
+
+Further details are in the [design notes](docs/design.md) and [SQL type coverage notes](docs/sql-types.md), currently written in Chinese.
