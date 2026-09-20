@@ -89,6 +89,17 @@ macro_rules
 
 块语法同样提供 `query% { for p in Person.table; where ...; yield ... }` 和 `sql% { ... }`，共用 `queryBody%` 扩展点。
 
+用带参数的 attribute 登记标量函数的 SQL 翻译：
+
+```lean
+attribute [sql_function "LOWER" 1] String.toLower
+
+@[sql_function "LOWER" 1]
+def lowerName (name : String) : String := name.toLower
+```
+
+这两种写法都登记全局规则，通过 `.olean` 持久化，导入声明规则的模块后即可用于 `sql%`。数值参数指定传给 SQL 函数的末尾实参数量，不包含前面的隐式类型参数。规则只影响 SQL 翻译，原生 `query%` 仍调用 Lean 函数。
+
 ## SQL 中端：复用 Lean 定义
 
 中端不必经由前端编译器。下面的 `sql!` 直接构造 SQL，并让字段类型参与 Lean elaboration：
@@ -185,7 +196,7 @@ PostgreSQL、SQLite、MySQL 有独立的参数占位符、引用／转义及能�
 
 - 原生前端可运行任意合法的纯 Lean term，但 SQL 编译并非 Lean 通用求值器。可以展开的函数和已注册规则才能下推；黑盒运行时 `Query` 闭包不能重新反射成 SQL。
 - SQL 适配器目前翻译 schema source、投影／过滤／join、集合并、排序分页、聚合、分组和嵌套集合。普通 List 生成器、任意 List 消费函数、直接对 `View.get` 的编译以及部分需要 LATERAL 的相关组合尚未实现；它们仍可在参考解释器执行。
-- `sql_function fn => "SQL_NAME" arity n` 可扩展标量函数规则。声明者负责保证语义对应，例如 Lean Unicode 小写转换与 SQLite 内置 LOWER 的适用范围不同。
+- `[sql_function "SQL_NAME" n]` 可扩展标量函数规则。声明者负责保证语义对应，例如 Lean Unicode 小写转换与 SQLite 内置 LOWER 的适用范围不同。
 - 编译器检查算术／比较实例，`BEq`、去重和分组需要对应的 `LawfulBEq`；排序目前接受标准 Int／Nat／String／Bool 的 `Ord`。自定义实例不会被默默替换为 SQL 默认运算。
 - 未显式排序的 SQL 查询不保证与内存 List 的遍历顺序一致。查询保留重复项；lens 使用有键集合语义。
 - Lean Int 没有位数上限，数据库数值、字符串排序、NULL 运算有各自语义。SQLite 绑定检查整数范围；SQL 算术不是无限精度 Lean Int 的完整实现。

@@ -27,6 +27,19 @@ end
 #guard_msgs (drop info) in
 #check_failure fun (opaqueRequest : Query Int) => sql% opaqueRequest
 
+-- Persistent rules are global; never silently export a local or scoped attribute.
+namespace FunctionAttributeRegression
+
+/-- error: Invalid attribute scope: Attribute `[sql_function]` must be global, not `local` -/
+#guard_msgs in
+attribute [local sql_function "UPPER" 1] String.toUpper
+
+/-- error: Invalid attribute scope: Attribute `[sql_function]` must be global, not `scoped` -/
+#guard_msgs in
+attribute [scoped sql_function "UPPER" 1] String.toUpper
+
+end FunctionAttributeRegression
+
 namespace SyntaxRegression
 
 -- Importing the frontend must leave `query` available as an ordinary name.

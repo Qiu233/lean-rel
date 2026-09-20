@@ -10,7 +10,11 @@ schema Brief "brief" { id : Int, name : String } key [id]
 schema Track "tracks" { album : Int, track : Int, rating : Int } key [album, track]
   dependencies { [track] -> [rating] }
 
-sql_function String.toLower => "LOWER" arity 1
+attribute [sql_function "LOWER" 1] String.toLower
+
+-- Test declaration attributes and SQL arity excluding implicit Lean parameters.
+@[sql_function "COALESCE" 2]
+def valueOr {α : Type} (value : Option α) (fallback : α) : α := value.getD fallback
 
 def people : List Person := [
   ⟨1, "Ada", 30, 10, none⟩,

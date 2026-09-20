@@ -21,6 +21,8 @@ flowchart LR
 
 `sql%` 在 elaboration 阶段读取已 elaborated 的 Lean Expr，识别组合子和标量运算、展开定义、调用登记的 SQL 函数规则。这是一个独立 consumer。它生成 SQL AST 的 Lean 构造程序，允许外部参数在运行时求值。运行时的数据库行值不提前在 Lean 中计算。
 
+`@[sql_function "NAME" n]` 与 `attribute [sql_function "NAME" n] fn` 共用 Lean 的 attribute 机制。参数语法参考 [binary 的 `bin_enum`](https://github.com/Lean-zh/binary/blob/master/Binary/Deriving.lean)，注册采用 [`ext` 的 `registerBuiltinAttribute` 写法](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/Elab/Tactic/Ext.lean)；存储使用 `SimplePersistentEnvExtension`，导入时合并各模块登记的规则。这里不能直接用 `registerParametricAttribute`：[Lean 4.34.0 的这个辅助接口](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/Attributes.lean)拒绝给已导入的声明加属性，而 SQL 适配模块需要给 `String.toLower` 等外部声明登记规则。规则因此归属于应用 attribute 的模块，通过 `.olean` 导出；不按函数的定义模块查找。当前 `sql_function` 只接受全局规则；`ext` 使用的 `SimpleScopedEnvExtension` 还支持 `local`／`scoped` 作用域。
+
 中端有自己的公开 SQL AST，以及直接构造它的 Lean builder。`SQL.Plan`／`SQL.Scalar` 使用统一的别名供应来组合相关子查询；schema 生成的 `Columns F` 提供类型明确的字段访问。这里的 SQL 语义是中端自身的，不要求用户经过前端。
 
 SQL renderer 负责方言差异；connection 负责准备语句、绑定值、结果读取、事务和冲突检查。任何新数据库都实现这一接口，不修改前端。

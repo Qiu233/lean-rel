@@ -16,6 +16,8 @@ structure FunctionRule where
   arity : Nat
   deriving Inhabited
 
+/-- Rules belong to the module applying the attribute, which can differ from the
+function's defining module. Merge them on import, including rules for imported functions. -/
 initialize functionRules : SimplePersistentEnvExtension FunctionRule (Array FunctionRule) ←
   registerSimplePersistentEnvExtension {
     addEntryFn := Array.push
@@ -23,12 +25,19 @@ initialize functionRules : SimplePersistentEnvExtension FunctionRule (Array Func
   }
 
 /-- Declare the SQL interpretation of a native scalar function. -/
-syntax (name := sqlFunction) "sql_function " ident " => " str &"arity" num : command
-@[command_elab sqlFunction]
-def elabSqlFunction : Command.CommandElab := fun stx => do
-  let `(command| sql_function $fn:ident => $sql:str arity $arity:num) := stx | throwUnsupportedSyntax
-  let name ← resolveGlobalConstNoOverload fn
-  modifyEnv fun env => functionRules.addEntry env ⟨name, sql.getString, arity.getNat⟩
+syntax (name := sql_function) "sql_function " str num : attr
+
+-- ParametricAttribute rejects imported declarations, but users must be able to
+-- write `attribute [sql_function "LOWER" 1] String.toLower` in an adapter module.
+initialize
+  registerBuiltinAttribute {
+    name := `sql_function
+    descr := "translate a native scalar function to a SQL function call"
+    add := fun decl stx kind => do
+      unless kind == .global do throwAttrMustBeGlobal `sql_function kind
+      let `(attr| sql_function $sql:str $arity:num) := stx | throwUnsupportedSyntax
+      modifyEnv fun env => functionRules.addEntry env ⟨decl, sql.getString, arity.getNat⟩
+  }
 
 private inductive Binding where
   | scalar (code : Lean.Expr)
@@ -202,7 +211,7 @@ private def unfold (e : Lean.Expr) : CompileM Lean.Expr := do
     if e' != e then return e'
   let e' ← whnfCore e
   if e' != e then return e'
-  throwError "SQL lowering has no rule for {e}. The native query is still valid; provide a sql_function rule or a translatable definition."
+  throwError "SQL lowering has no rule for {e}. The native query is still valid; add a [sql_function] attribute or provide a translatable definition."
 
 private partial def conditional (p : Lean.Expr) (a b : Binding) : CompileM Binding := do
   match a, b with

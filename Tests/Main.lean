@@ -28,6 +28,7 @@ def sumSQL := sql% (query% [p.age | p ← Person.table]).sum
 def anySQL := sql% (Query.scan Person.table).any (fun p => p.age > 29)
 def allSQL := sql% (Query.scan Person.table).all (fun p => p.age > 20)
 def lowerSQL := sql% [p.name.toLower | p ← Person.table]
+def fallbackSQL := sql% [valueOr p.note p.name | p ← Person.table]
 def optionalSQL := sql% [p.id | p ← Person.table, p.note == none]
 def bonus (age : Int) : Int := if age ≥ 18 then age + 2 else age
 def helperSQL := sql% [(p.id, bonus p.age) | p ← Person.table]
@@ -140,7 +141,9 @@ def main : IO Unit := do
   compareQuery connection "SQL/native sum" (query% [p.age | p ← Person.table]).sum sumSQL
   compareQuery connection "SQL/native any" ((Query.scan Person.table).any (fun p => p.age > 29)) anySQL
   compareQuery connection "SQL/native all" ((Query.scan Person.table).all (fun p => p.age > 20)) allSQL
-  compareQuery connection "imported function lowering rule" (query% [p.name.toLower | p ← Person.table]) lowerSQL
+  compareQuery connection "imported attribute on existing function" (query% [p.name.toLower | p ← Person.table]) lowerSQL
+  compareQuery connection "imported declaration attribute with implicit parameter"
+    (query% [valueOr p.note p.name | p ← Person.table]) fallbackSQL
   compareQuery connection "nullable equality" (query% [p.id | p ← Person.table, p.note == none]) optionalSQL
   compareQuery connection "native helper and conditionals" (query% [(p.id, bonus p.age) | p ← Person.table]) helperSQL
   compareQuery connection "ordered correlated nested collections and empty groups" nestedTeams nestedTeamsSQL
