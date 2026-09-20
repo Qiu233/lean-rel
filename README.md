@@ -27,7 +27,7 @@ schema Person "people" (
 def adultNames (minimum : Int) := sql% [
   p.name.toLower | p : Person ← table, p.age ≥ minimum]
 
-def increaseAges := update [
+def increaseAges := update% [
   {p with age := p.age + 1} | p : Person ← View.base table, p.age ≥ 18]
 
 def main : IO Unit := do
@@ -270,7 +270,7 @@ Applications using only the middle end can import `LeanRel.Schema` and `LeanRel.
 ```lean
 def people := View.base (@table Person _)
 def adultsView := people.select (fun p => p.age ≥ 18)
-def birthday := update [
+def birthday := update% [
   {p with age := p.age + 1} | p ← people, p.age ≥ 18]
 ```
 

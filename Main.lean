@@ -21,7 +21,7 @@ def directSQL (minimum : Int) := sql! [
   SELECT (p.name, p.age + 1) FROM p IN @table Person _
   WHERE eligible minimum p ORDER BY [p.id.asc]]
 
-def birthday := update [
+def birthday := update% [
   {p with age := p.age + 1} | p : Person ← View.base table, p.age ≥ 18]
 
 def main : IO Unit := do

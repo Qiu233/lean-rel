@@ -88,11 +88,11 @@ def nativeNested := query% [
   let bump := fun (n : Int) => match p.note with | none => n + 1 | some _ => n,
   scores ← (query% [bump n | n ← [p.age, p.age + 1]]).collect]
 
-def raiseAdults := update [ {p with age := p.age + 1} | p ← peopleView, p.age ≥ 18 ]
-def badSelection := update [ {p with age := 1} | p ← adultsView ]
-def renameBrief := update [ {p with name := p.name ++ "!"} | p ← briefView, p.id == 1 ]
-def renameTeams := update [ (pair.1, {pair.2 with label := pair.2.label ++ "!"}) | pair ← joinedView ]
-def raiseRating := update [ {t with rating := 9} | t ← tracksView.select (·.album == 1), t.track == 5 ]
+def raiseAdults := update% [ {p with age := p.age + 1} | p ← peopleView, p.age ≥ 18 ]
+def badSelection := update% [ {p with age := 1} | p ← adultsView ]
+def renameBrief := update% [ {p with name := p.name ++ "!"} | p ← briefView, p.id == 1 ]
+def renameTeams := update% [ (pair.1, {pair.2 with label := pair.2.label ++ "!"}) | pair ← joinedView ]
+def raiseRating := update% [ {t with rating := 9} | t ← tracksView.select (·.album == 1), t.track == 5 ]
 
 private def insertRows (table : TableDef) (rows : Relation) : SQL.Statement :=
   .insert [table.name] table.names (.values (rows.map fun row => table.names.map fun n => .param ((row.lookup n).getD .null)))
@@ -182,7 +182,7 @@ def main : IO Unit := do
   let itemInsert ← get sql! [INSERT INTO @table MiddleOnly.Item _ VALUES [item]]
   let _ ← get (← memory.execute [.createTable itemDDL, itemInsert])
   let _ ← get (← Compiler.executeUpdate memory
-    (update [{i with enabled := !i.enabled} | i : MiddleOnly.Item ← View.base table]))
+    (update% [{i with enabled := !i.enabled} | i : MiddleOnly.Item ← View.base table]))
   let items ← get (← (sql! [SELECT i FROM i IN @table MiddleOnly.Item _]).fetch memory)
   check "snapshot decodes SQLite boolean and BLOB" (items == [{item with enabled := false}])
   let metadataDDL ← get (SQL.CreateTable.ofTable (HasTable.schema MetadataField))
@@ -190,7 +190,7 @@ def main : IO Unit := do
   let metadataInsert ← get sql! [INSERT INTO @table MetadataField _ VALUES [metadata]]
   let _ ← get (← memory.execute [.createTable metadataDDL, metadataInsert])
   let _ ← get (← Compiler.executeUpdate memory
-    (update [{r with schema := r.schema ++ "_updated"} | r : MetadataField ← View.base table]))
+    (update% [{r with schema := r.schema ++ "_updated"} | r : MetadataField ← View.base table]))
   let metadataRows ← get (← memory.query (α := String × String) SchemaAccess.metadataQuery)
   check "schema field survives typed update and SQL query" (metadataRows == [("public_updated", "people")])
   let changed ← get (← memory.execute [sql! [UPDATE p IN @table Person _ SET {p with age := p.age + 2}

@@ -239,11 +239,11 @@ def View.modify (view : View α) (transform : α → α) : Update := { sources :
   (view.put (rows.map transform)).run db }
 
 open Lean Elab Term
-syntax:max (name := updateComprehension) "update " "[" term " | " queryQualifier,+ "]" : term
+syntax:max (name := updateComprehension) "update% " "[" term " | " queryQualifier,+ "]" : term
 
 @[term_elab updateComprehension]
 def elabUpdate : TermElab := fun stx expected => do
-  let `(update [ $result:term | $[$qualifiers:queryQualifier],* ]) := stx | throwUnsupportedSyntax
+  let `(update% [ $result:term | $[$qualifiers:queryQualifier],* ]) := stx | throwUnsupportedSyntax
   let first := qualifiers[0]!
   let `(queryQualifier| $x:ident $[: $type:term]? ← $view:term) := first
     | throwErrorAt first "an update comprehension starts with a view generator"
