@@ -2,6 +2,7 @@ import Tests.Schema
 import Tests.MiddleOnly
 import Tests.Compiler
 import Tests.FunctionScopes
+import Tests.SchemaAccess
 
 open LeanRel LeanRel.Frontend LeanRel.Tests
 open scoped LeanRel.SQL
@@ -17,50 +18,50 @@ private def get {α} (value : Except String α) : IO α := IO.ofExcept value
 -- Compiled in a separate module from schema/rule declarations: tests extension persistence.
 def adultsSQL (n : Int) := sql% adults n
 def sourceSQL (source : Source Person) := sql% [p.name | p ← source]
-def joinQuery := query% [ (p.name, t.label) | p ← Person.table, t ← Team.table, p.teamId == t.teamId ]
+def joinQuery := query% [ (p.name, t.label) | p : Person ← table, t : Team ← table, p.teamId == t.teamId ]
 def joinSQL := sql% joinQuery
-def ordered := (query% [ (p.id, p.age) | p ← Person.table ]).sortBy Prod.snd
+def ordered := (query% [ (p.id, p.age) | p : Person ← table ]).sortBy Prod.snd
 def paged := (ordered.take 2).filter (fun p => p.2 ≥ 20)
 def pagedSQL := sql% paged
-def teamIds := (query% [p.teamId | p ← Person.table]).distinct
+def teamIds := (query% [p.teamId | p : Person ← table]).distinct
 def teamIdsSQL := sql% teamIds
 def countSQL := sql% (adults 18).count
-def sumSQL := sql% (query% [p.age | p ← Person.table]).sum
-def anySQL := sql% (Query.scan Person.table).any (fun p => p.age > 29)
-def allSQL := sql% (Query.scan Person.table).all (fun p => p.age > 20)
+def sumSQL := sql% (query% [p.age | p : Person ← table]).sum
+def anySQL := sql% (Query.scan (@table Person _)).any (fun p => p.age > 29)
+def allSQL := sql% (Query.scan (@table Person _)).all (fun p => p.age > 20)
 open LeanRel.SQL.Standard in
-def lowerSQL := sql% [p.name.toLower | p ← Person.table]
-def fallbackSQL := sql% [valueOr p.note p.name | p ← Person.table]
-def optionalSQL := sql% [p.id | p ← Person.table, p.note == none]
+def lowerSQL := sql% [p.name.toLower | p : Person ← table]
+def fallbackSQL := sql% [valueOr p.note p.name | p : Person ← table]
+def optionalSQL := sql% [p.id | p : Person ← table, p.note == none]
 def bonus (age : Int) : Int := if age ≥ 18 then age + 2 else age
-def helperSQL := sql% [(p.id, bonus p.age) | p ← Person.table]
+def helperSQL := sql% [(p.id, bonus p.age) | p : Person ← table]
 
-def nestedTeams := query% [(t.label, members) | t ← Team.table,
-  members ← (query% [(p.name, p.note) | p ← Person.table, p.teamId == t.teamId]).sortBy Prod.fst |>.collect]
+def nestedTeams := query% [(t.label, members) | t : Team ← table,
+  members ← (query% [(p.name, p.note) | p : Person ← table, p.teamId == t.teamId]).sortBy Prod.fst |>.collect]
 def nestedTeamsSQL := sql% nestedTeams
-def groups := (Query.scan Person.table).groupBy (·.teamId) |>.sortBy Prod.fst
+def groups := (Query.scan (@table Person _)).groupBy (·.teamId) |>.sortBy Prod.fst
 def groupsSQL := sql% groups
 def groupSizes := query% [(g.1, g.2.length) | g ← groups]
 def groupSizesSQL := sql% groupSizes
-def deepNested := query% [(t.label, members) | t ← Team.table,
-  members ← (query% [(p.name, others) | p ← Person.table, p.teamId == t.teamId,
-    others ← (query% [q.id | q ← Person.table, q.teamId == p.teamId]).collect]).collect]
+def deepNested := query% [(t.label, members) | t : Team ← table,
+  members ← (query% [(p.name, others) | p : Person ← table, p.teamId == t.teamId,
+    others ← (query% [q.id | q : Person ← table, q.teamId == p.teamId]).collect]).collect]
 def deepNestedSQL := sql% deepNested
 
 def middleAdult (minimum : Int) (p : Person.Columns SQL.Scalar) : SQL.Scalar Bool :=
   p.age >=. SQL.param minimum
 def nativeMiddle (minimum : Int) := sql! [
-  SELECT (p.name, p.age + 1) FROM p IN Person.table
+  SELECT (p.name, p.age + 1) FROM p IN @table Person _
   WHERE middleAdult minimum p ORDER BY [p.id.asc]]
 def nativeMiddleJoin := sql! [
-  SELECT (p.name, t.label) FROM p IN Person.table
-  JOIN t IN Team.table ON p.teamId ==. t.teamId ORDER BY [p.id.asc]]
-def nativeCorrelated := sql! [SELECT t.label FROM t IN Team.table WHERE
-  (sql! [SELECT p.id FROM p IN Person.table WHERE p.teamId ==. t.teamId]).exists_
+  SELECT (p.name, t.label) FROM p IN @table Person _
+  JOIN t IN @table Team _ ON p.teamId ==. t.teamId ORDER BY [p.id.asc]]
+def nativeCorrelated := sql! [SELECT t.label FROM t IN @table Team _ WHERE
+  (sql! [SELECT p.id FROM p IN @table Person _ WHERE p.teamId ==. t.teamId]).exists_
   ORDER BY [t.teamId.asc]]
-def nativeGrouped := sql! [SELECT (p.teamId, p.id.count) FROM p IN Person.table
+def nativeGrouped := sql! [SELECT (p.teamId, p.id.count) FROM p IN @table Person _
   GROUP BY p.teamId HAVING p.id.count >. 1 ORDER BY [p.teamId.asc]]
-def nativeRecord := sql! [SELECT p FROM p IN Person.table ORDER BY [p.id.asc]]
+def nativeRecord := sql! [SELECT p FROM p IN @table Person _ ORDER BY [p.id.asc]]
 
 -- Full Lean terms and a later syntax extension work without changing a central AST.
 syntax "unless " term : queryQualifier
@@ -73,17 +74,17 @@ macro_rules
     `(if $p then Query.empty else queryBody%{ $body })
 
 def extendedSQL (minimum : Int) := sql% [
-  p.name | p <- Person.table, let cutoff := minimum, unless p.age < cutoff]
+  p.name | p : Person <- table, let cutoff := minimum, unless p.age < cutoff]
 def blockQuery (minimum : Int) : Query String := query% {
-  for query in Person.table; let cutoff := minimum;
+  for query : Person in table; let cutoff := minimum;
   unless query.age < cutoff; yield query.name }
 def blockSQL (minimum : Int) : SQL.Query := sql% {
-  for query in Person.table; let cutoff := minimum;
+  for query : Person in table; let cutoff := minimum;
   unless query.age < cutoff; yield query.name }
 
 def nativeNested := query% [
   (p.name, scores) |
-  p ← Person.table,
+  p : Person ← table,
   let bump := fun (n : Int) => match p.note with | none => n + 1 | some _ => n,
   scores ← (query% [bump n | n ← [p.age, p.age + 1]]).collect]
 
@@ -91,7 +92,7 @@ def raiseAdults := update [ {p with age := p.age + 1} | p ← peopleView, p.age 
 def badSelection := update [ {p with age := 1} | p ← adultsView ]
 def renameBrief := update [ {p with name := p.name ++ "!"} | p ← briefView, p.id == 1 ]
 def renameTeams := update [ (pair.1, {pair.2 with label := pair.2.label ++ "!"}) | pair ← joinedView ]
-def raiseRating := update [ {t with rating := 9} | t ← (View.base Track.table).select (·.album == 1), t.track == 5 ]
+def raiseRating := update [ {t with rating := 9} | t ← (View.base (@table Track _)).select (·.album == 1), t.track == 5 ]
 
 private def insertRows (table : TableDef) (rows : Relation) : SQL.Statement :=
   .insert [table.name] table.names (.values (rows.map fun row => table.names.map fun n => .param ((row.lookup n).getD .null)))
@@ -106,9 +107,9 @@ def main : IO Unit := do
   LeanRel.Tests.FunctionScopes.run
   check "native comprehensions" ((← get ((adults 18).run database)) == [("Ada", 31), ("Chen", 26)])
   check "native nested terms" ((← get (nativeNested.run database)) == [("Ada", [31, 32]), ("Bo", [16, 17]), ("Chen", [26, 27])])
-  let extended := query% [p.name | p ← Person.table, unless p.age < 18]
+  let extended := query% [p.name | p : Person ← table, unless p.age < 18]
   check "open DSL clause" ((← get (extended.run database)) == ["Ada", "Chen"])
-  let ascii := query% [p.name | p <- Person.table, p.age ≥ 18]
+  let ascii := query% [p.name | p : Person <- table, p.age ≥ 18]
   check "shared left-arrow parser" ((← get (ascii.run database)) == ["Ada", "Chen"])
   let noChange ← get ((peopleView.put people).run database)
   check "lens GetPut" noChange.changes.isEmpty
@@ -120,9 +121,9 @@ def main : IO Unit := do
   let inserted ← get ((briefView.put [⟨1, "Ada"⟩, ⟨2, "Bo"⟩, ⟨3, "Chen"⟩, ⟨4, "New"⟩]).run database)
   check "projection insertion defaults" ((← get (peopleView.get.run inserted.database)).getLast!.age == 0)
   let joined ← get (renameTeams.run database)
-  check "join propagates shared dimension" ((← get ((View.base Team.table).get.run joined.database)).map (·.label) == ["A!", "B!", "unreferenced"])
+  check "join propagates shared dimension" ((← get ((View.base (@table Team _)).get.run joined.database)).map (·.label) == ["A!", "B!", "unreferenced"])
   let rated ← get (raiseRating.run database)
-  let ratedRows ← get ((View.base Track.table).get.run rated.database)
+  let ratedRows ← get ((View.base (@table Track _)).get.run rated.database)
   check "selection revises hidden FD dependents" ((ratedRows.filter (·.track == 5)).all (·.rating == 9))
   check "self-join policy is explicit" (((peopleView.join peopleView).get.run database).toOption.isNone)
   let duplicate := people ++ [people.head!]
@@ -131,24 +132,24 @@ def main : IO Unit := do
   let file := System.FilePath.mk ".lake/lean-rel-tests.sqlite"
   if ← file.pathExists then IO.FS.removeFile file
   let connection ← Backend.SQLite.connect file
-  let create ← get ([Person.schema, Team.schema, Track.schema].mapM fun t => SQL.Statement.createTable <$> SQL.CreateTable.ofTable t)
-  let _ ← get (← connection.execute (create ++ [insertRows Person.schema (records people), insertRows Team.schema (records teams), insertRows Track.schema (records tracks)]))
+  let create ← get ([(HasTable.schema Person), (HasTable.schema Team), (HasTable.schema Track)].mapM fun t => SQL.Statement.createTable <$> SQL.CreateTable.ofTable t)
+  let _ ← get (← connection.execute (create ++ [insertRows (HasTable.schema Person) (records people), insertRows (HasTable.schema Team) (records teams), insertRows (HasTable.schema Track) (records tracks)]))
   compareQuery connection "SQL/native projection and parameters" (adults 18) (adultsSQL 18)
-  compareQuery connection "runtime source with static row metadata" (query% [p.name | p ← Person.table]) (sourceSQL Person.table)
-  compareQuery connection "sql% comprehension shares clause extensions" (query% [p.name | p ← Person.table, unless p.age < 18]) (extendedSQL 18)
+  compareQuery connection "runtime source with static row metadata" (query% [p.name | p : Person ← table]) (sourceSQL (@table Person _))
+  compareQuery connection "sql% comprehension shares clause extensions" (query% [p.name | p : Person ← table, unless p.age < 18]) (extendedSQL 18)
   compareQuery connection "query% and sql% blocks share expansion and ordinary query binder" (blockQuery 18) (blockSQL 18)
   compareQuery connection "SQL/native join" joinQuery joinSQL
   compareQuery connection "SQL/native order + take + filter" paged pagedSQL
   compareQuery connection "SQL/native distinct" teamIds teamIdsSQL
   compareQuery connection "SQL/native count" (adults 18).count countSQL
-  compareQuery connection "SQL/native sum" (query% [p.age | p ← Person.table]).sum sumSQL
-  compareQuery connection "SQL/native any" ((Query.scan Person.table).any (fun p => p.age > 29)) anySQL
-  compareQuery connection "SQL/native all" ((Query.scan Person.table).all (fun p => p.age > 20)) allSQL
-  compareQuery connection "scoped standard LOWER translation" (query% [p.name.toLower | p ← Person.table]) lowerSQL
+  compareQuery connection "SQL/native sum" (query% [p.age | p : Person ← table]).sum sumSQL
+  compareQuery connection "SQL/native any" ((Query.scan (@table Person _)).any (fun p => p.age > 29)) anySQL
+  compareQuery connection "SQL/native all" ((Query.scan (@table Person _)).all (fun p => p.age > 20)) allSQL
+  compareQuery connection "scoped standard LOWER translation" (query% [p.name.toLower | p : Person ← table]) lowerSQL
   compareQuery connection "imported declaration attribute with implicit parameter"
-    (query% [valueOr p.note p.name | p ← Person.table]) fallbackSQL
-  compareQuery connection "nullable equality" (query% [p.id | p ← Person.table, p.note == none]) optionalSQL
-  compareQuery connection "native helper and conditionals" (query% [(p.id, bonus p.age) | p ← Person.table]) helperSQL
+    (query% [valueOr p.note p.name | p : Person ← table]) fallbackSQL
+  compareQuery connection "nullable equality" (query% [p.id | p : Person ← table, p.note == none]) optionalSQL
+  compareQuery connection "native helper and conditionals" (query% [(p.id, bonus p.age) | p : Person ← table]) helperSQL
   compareQuery connection "ordered correlated nested collections and empty groups" nestedTeams nestedTeamsSQL
   compareQuery connection "native grouping" groups groupsSQL
   compareQuery connection "native collection length" groupSizes groupSizesSQL
@@ -160,14 +161,14 @@ def main : IO Unit := do
   check "middle end whole record projection" ((← get (← nativeRecord.fetch connection)) == people)
 
   let memory ← Backend.SQLite.connect ":memory:"
-  let createPerson ← get (SQL.CreateTable.ofTable Person.schema)
+  let createPerson ← get (SQL.CreateTable.ofTable (HasTable.schema Person))
   let _ ← get (← memory.execute [.createTable createPerson])
-  let batch ← get sql! [INSERT INTO Person.table VALUES people]
+  let batch ← get sql! [INSERT INTO @table Person _ VALUES people]
   let _ ← get (← memory.execute [batch])
-  let _ ← get (← memory.execute [sql! [UPDATE p IN Person.table SET {p with age := p.age + 1}
+  let _ ← get (← memory.execute [sql! [UPDATE p IN @table Person _ SET {p with age := p.age + 1}
     WHERE middleAdult 18 p]])
   check "native leansqlite memory connection persists" ((← get (← (nativeMiddle 18).fetch memory)) == [("Ada", 32), ("Chen", 27)])
-  let _ ← get (← memory.execute [sql! [DELETE FROM p IN Person.table WHERE p.age <. 18]])
+  let _ ← get (← memory.execute [sql! [DELETE FROM p IN @table Person _ WHERE p.age <. 18]])
   check "middle end typed delete" ((← get (← nativeRecord.fetch memory)).length == 2)
   let _ ← get (← Compiler.executeUpdate memory raiseAdults)
   check "lens reads its database snapshot" ((← get (← (nativeMiddle 18).fetch memory)) == [("Ada", 33), ("Chen", 28)])
@@ -176,16 +177,24 @@ def main : IO Unit := do
   check "native SQLite scalar bindings including BLOB" (scalars[0]!.rows == [[.int 1, .real 3.5, .null, .blob #[0, 1, 255]]])
   let tooLarge ← memory.execute [sql! [SELECT ${(9223372036854775808 : Int)}]]
   check "SQLite rejects integer overflow before binding" tooLarge.toOption.isNone
-  let itemDDL ← get (SQL.CreateTable.ofTable MiddleOnly.Item.schema)
+  let itemDDL ← get (SQL.CreateTable.ofTable (HasTable.schema MiddleOnly.Item))
   let item : MiddleOnly.Item := ⟨1, "binary", true, #[0, 255]⟩
-  let itemInsert ← get sql! [INSERT INTO MiddleOnly.Item.table VALUES [item]]
+  let itemInsert ← get sql! [INSERT INTO @table MiddleOnly.Item _ VALUES [item]]
   let _ ← get (← memory.execute [.createTable itemDDL, itemInsert])
   let _ ← get (← Compiler.executeUpdate memory
-    (update [{i with enabled := !i.enabled} | i ← View.base MiddleOnly.Item.table]))
-  let items ← get (← (sql! [SELECT i FROM i IN MiddleOnly.Item.table]).fetch memory)
+    (update [{i with enabled := !i.enabled} | i : MiddleOnly.Item ← View.base table]))
+  let items ← get (← (sql! [SELECT i FROM i IN @table MiddleOnly.Item _]).fetch memory)
   check "snapshot decodes SQLite boolean and BLOB" (items == [{item with enabled := false}])
-  let changed ← get (← memory.execute [sql! [UPDATE p IN Person.table SET {p with age := p.age + 2}
-    WHERE (sql! [SELECT i.id FROM i IN MiddleOnly.Item.table WHERE i.id ==. p.id]).exists_]])
+  let metadataDDL ← get (SQL.CreateTable.ofTable (HasTable.schema MetadataField))
+  let metadata : MetadataField := ⟨1, "public", "people"⟩
+  let metadataInsert ← get sql! [INSERT INTO @table MetadataField _ VALUES [metadata]]
+  let _ ← get (← memory.execute [.createTable metadataDDL, metadataInsert])
+  let _ ← get (← Compiler.executeUpdate memory
+    (update [{r with schema := r.schema ++ "_updated"} | r : MetadataField ← View.base table]))
+  let metadataRows ← get (← memory.query (α := String × String) SchemaAccess.metadataQuery)
+  check "schema field survives typed update and SQL query" (metadataRows == [("public_updated", "people")])
+  let changed ← get (← memory.execute [sql! [UPDATE p IN @table Person _ SET {p with age := p.age + 2}
+    WHERE (sql! [SELECT i.id FROM i IN @table MiddleOnly.Item _ WHERE i.id ==. p.id]).exists_]])
   check "correlated native update" (changed[0]!.affected == 1)
   let missing ← get (memory.render sql! [UPDATE people SET age = 999 WHERE id = 500])
   let conflict ← memory.run {statements := [⟨missing, some 1⟩]}

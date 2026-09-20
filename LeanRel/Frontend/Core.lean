@@ -48,10 +48,12 @@ instance : Monad Query where
   bind := Query.bind
   map := Query.map
 
-class ToQuery (source : Type) (element : outParam Type) where
-  toQuery : source → Query element
-instance [Codec α] : ToQuery (Source α) α := ⟨Query.scan⟩
-instance : ToQuery (Query α) α := ⟨id⟩
-instance : ToQuery (List α) α := ⟨Query.ofList⟩
+/-- Keep the element visible in the source type so ordinary Lean elaboration
+can propagate a generator's type annotation into a polymorphic source term. -/
+class ToQuery (source : Type → Type) (element : Type) where
+  toQuery : source element → Query element
+instance [Codec α] : ToQuery Source α := ⟨Query.scan⟩
+instance : ToQuery Query α := ⟨id⟩
+instance : ToQuery List α := ⟨Query.ofList⟩
 
 end LeanRel.Frontend

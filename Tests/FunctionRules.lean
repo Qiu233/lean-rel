@@ -19,7 +19,7 @@ attribute [scoped sql_function "LOWER" 1] nativeLower
 opaque nativeUpper (s : String) : String := s.toUpper
 
 -- A scoped rule is active in its own namespace as well as when opened.
-def insideNamespace := sql% [nativeLower r.text | r ← FunctionRow.table]
+def insideNamespace := sql% [nativeLower r.text | r : FunctionRow ← table]
 
 end TextTranslations
 end LeanRel.Tests.FunctionRules
@@ -31,4 +31,4 @@ open LeanRel LeanRel.Frontend LeanRel.Tests.FunctionRules
 attribute [local sql_function "UPPER" 1] fileOnlyUpper
 
 def LeanRel.Tests.FunctionRules.fileLocalSQL :=
-  sql% [fileOnlyUpper r.text | r ← FunctionRow.table]
+  sql% [fileOnlyUpper r.text | r : FunctionRow ← table]

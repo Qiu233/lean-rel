@@ -9,20 +9,20 @@ open scoped LeanRel.SQL
 schema Item "items" { id : Int, title : String, enabled : Bool, bytes : Array UInt8 } key [id]
 
 def reusable (i : Item.Columns SQL.Scalar) := i.enabled &&. (i.id >. 0)
-def query := sql! [SELECT i FROM i IN Item.table WHERE reusable i]
-def prepared := SQL.render .sqlite sql! [SELECT i.title FROM i IN Item.table WHERE reusable i]
+def query := sql! [SELECT i FROM i IN @table Item _ WHERE reusable i]
+def prepared := SQL.render .sqlite sql! [SELECT i.title FROM i IN @table Item _ WHERE reusable i]
 def raw := SQL.render .sqlite sql! [SELECT title FROM items WHERE enabled = TRUE]
 def fragment := sql_expr! [id > ${(3 : Int)}]
-def composed := sql_query! [SELECT title FROM @{Item.schema} WHERE @{fragment}]
+def composed := sql_query! [SELECT title FROM @{HasTable.schema Item} WHERE @{fragment}]
 
 #guard_msgs (drop info) in
-#check_failure sql! [SELECT i.missing FROM i IN Item.table]
+#check_failure sql! [SELECT i.missing FROM i IN @table Item _]
 #guard_msgs (drop info) in
-#check_failure sql! [SELECT i.title + i.id FROM i IN Item.table]
+#check_failure sql! [SELECT i.title + i.id FROM i IN @table Item _]
 #guard_msgs (drop info) in
-#check_failure sql! [UPDATE i IN Item.table SET {i with id := "wrong"}]
+#check_failure sql! [UPDATE i IN @table Item _ SET {i with id := "wrong"}]
 #guard_msgs (drop info) in
-#check_failure sql! [SELECT i.title FROM i IN Item.table WHERE i.id]
+#check_failure sql! [SELECT i.title FROM i IN @table Item _ WHERE i.id]
 #guard_msgs (drop info) in
 #check_failure i.title
 

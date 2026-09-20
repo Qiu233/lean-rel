@@ -190,7 +190,7 @@ def join (left : View α) (right : View β) (deletion : DeletePolicy := .left) :
 
 end View
 
-instance : ToQuery (View α) α := ⟨View.get⟩
+instance : ToQuery View α := ⟨View.get⟩
 
 structure Snapshot where
   table : TableDef
@@ -245,7 +245,7 @@ syntax:max (name := updateComprehension) "update " "[" term " | " queryQualifier
 def elabUpdate : TermElab := fun stx expected => do
   let `(update [ $result:term | $[$qualifiers:queryQualifier],* ]) := stx | throwUnsupportedSyntax
   let first := qualifiers[0]!
-  let `(queryQualifier| $x:ident ← $view:term) := first
+  let `(queryQualifier| $x:ident $[: $type:term]? ← $view:term) := first
     | throwErrorAt first "an update comprehension starts with a view generator"
   let mut body := result
   for qualifier in (qualifiers.extract 1 qualifiers.size).reverse do
@@ -253,6 +253,9 @@ def elabUpdate : TermElab := fun stx expected => do
       | `(queryQualifier| let $y:ident := $v:term) => `(let $y := $v; $body)
       | `(queryQualifier| $p:term) => `(if $p then $body else $x)
       | _ => throwErrorAt qualifier "compose views with View.join before updating; subsequent qualifiers are guards or lets"
-  elabTerm (← `(View.modify $view (fun $x => $body))) expected
+  let transform ← match type with
+    | some type => `(fun ($x : $type) => $body)
+    | none => `(fun $x => $body)
+  elabTerm (← `(View.modify $view $transform)) expected
 
 end LeanRel.Frontend

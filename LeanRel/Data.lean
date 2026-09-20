@@ -204,4 +204,15 @@ structure Source (α : Type) where
   definition : TableDef
   deriving Repr
 
+/-- The default table for a row type. Schema declarations generate this instance
+without adding `table` or `schema` declarations to the row type's namespace. -/
+class HasTable (α : Type) where
+  table : Source α
+
+export HasTable (table)
+
+/-- Runtime schema metadata from the same instance that supplies `table`. -/
+def HasTable.schema (α : Type) [HasTable α] : TableDef :=
+  (@table α _).definition
+
 end LeanRel

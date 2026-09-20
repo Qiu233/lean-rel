@@ -27,11 +27,15 @@ schema Person "people" {
 此 command 生成：
 
 - 普通结构 `Person`，可以直接使用 `p.age`、模式匹配和 `{p with age := ...}`。
-- `Codec Person`、`Person.schema : TableDef`、`Person.table : Source Person`。
+- `Codec Person` 和 `HasTable Person` instance；普通函数 `table` 从 instance 取得 `Source Person`。
 - 通用字段容器 `Person.Columns F`，字段分别为 `F Int`、`F String` 等；它本身与 SQL 无关。
 - 跨模块持久化的编译期元数据，供 elaborator 使用。
 
 字段类型是 Lean term，可用类型别名，也可以扩展 `ColumnType`／`Codec`。内置 `Int`、`Float`、`Bool`、`String`、`Array UInt8` 和可空的 `Option` 类型。`key []` 可表示无键查询源；可更新的基本 view 要求键。
+
+`table` 是 `HasTable.table` 的导出名称，行类型由上下文推导；需要显式指定时写 `@table Person _`，其中 `_` 仍由 Lean 合成 instance。`HasTable.schema Person` 从同一个 instance 取得 `TableDef`。schema 不再生成 `Person.table` 或 `Person.schema` 辅助定义；局部 `HasTable Person` instance 可以替换默认 source。
+
+字段名 `table` 按 SQL 标准保留字 `TABLE` 检查，不区分大小写。`schema` 在 SQL:2023 中不是保留字，可以直接声明为字段；参见 [SQL 标准关键字对照](https://www.postgresql.org/docs/current/sql-keywords-appendix.html)。
 
 函数依赖也在 schema 中声明：
 
@@ -41,27 +45,36 @@ schema Track "tracks" {
 } key [album, track] dependencies { [track] -> [rating] }
 ```
 
-元数据并不只存在于编译期：`.schema` 仍是普通运行时值；SQL 建表从 `SQL.CreateTable.ofTable Person.schema` 获得。一般函数依赖由 lens 验证，不自动变成数据库约束或触发器。
+`HasTable.schema Person` 是普通运行时值，SQL 建表使用 `SQL.CreateTable.ofTable (HasTable.schema Person)`。一般函数依赖由 lens 验证，不自动变成数据库约束或触发器。
 
 ## 丰富前端：Lean term 构成的 comprehension
 
 ```lean
 def adults (minimum : Int) := query% [
-  (p.name, p.age + 1) | p ← Person.table, p.age ≥ minimum]
+  (p.name, p.age + 1) | p : Person ← table, p.age ≥ minimum]
 
 def bonus (age : Int) : Int := if age ≥ 18 then age + 2 else age
 
 def computed := query% [
   (p.name, bonus p.age) |
-  p ← Person.table,
+  p : Person ← table,
   let eligible := p.age ≥ 18,
   eligible]
 
 def adultsSQL (minimum : Int) := sql% [
-  (p.name, p.age + 1) | p ← Person.table, p.age ≥ minimum]
+  (p.name, p.age + 1) | p : Person ← table, p.age ≥ minimum]
 ```
 
 生成器接受 `Source α`、`Query α`、普通 `List α` 和 `View α`。`←` 与 `<-` 使用同一个 Lean parser。结果、数据源、`let` 绑定、谓词都是原生 term；函数、闭包、`match`、记录和已有宏都由 Lean elaborator 处理。
+
+生成器的 `: Person` 是可选的。`p : Person ← table` 把行类型传给数据源；源或结果上下文已经提供类型时，可以省略标注，例如：
+
+```lean
+def allPeople : Query Person := query% [p | p ← table]
+def knownSource := query% [p.name | p ← @table Person _]
+```
+
+标注展开为普通 Lean lambda 的参数类型，推导使用 Lean 自身的 elaborator。块语法和更新 comprehension 也支持相同的可选标注。
 
 `query% [...]` 产生原生 `Query α`；`sql% [...]` 使用相同的 comprehension，直接生成独立的 `SQL.Query`。两个入口都可直接作为函数实参，`query` 本身仍可用作普通标识符。已有查询定义或组合子表达式也可通过 `sql% adults minimum` 复用并下推。
 
@@ -70,10 +83,10 @@ def adultsSQL (minimum : Int) := sql% [
 `Query` 还提供 `map`、`filter`、`unionAll`、`distinct`、`sortBy`、`take`、`drop`、`count`、`sum`、`any`、`all`、`collect` 和 `groupBy`。例如：
 
 ```lean
-def grouped := (Query.scan Person.table).groupBy (fun p => p.age)
+def grouped := (Query.scan (@table Person _)).groupBy (fun p => p.age)
 def groupedSQL := sql% grouped
 
-def names := (query% [p.name | p ← Person.table]).collect
+def names := (query% [p.name | p : Person ← table]).collect
 ```
 
 `collect` 产生一个集合值，支持相关嵌套；SQL 适配器目前用嵌套集合表达式及 JSON 聚合／解码实现，没有逐行发查询。
@@ -87,14 +100,14 @@ macro_rules
     `(if $p then Query.empty else $body)
 ```
 
-块语法同样提供 `query% { for p in Person.table; where ...; yield ... }` 和 `sql% { ... }`，共用 `queryBody%` 扩展点。
+块语法同样提供 `query% { for p : Person in table; where ...; yield ... }` 和 `sql% { ... }`，共用 `queryBody%` 扩展点。
 
 常用标量函数翻译随 `import LeanRel` 加载，全部登记在 `LeanRel.SQL.Standard` 的 scoped 规则中。打开 namespace 后启用：
 
 ```lean
 open LeanRel.SQL.Standard
 
-def normalizedNames := sql% [(p.name.toLower, p.name.length) | p ← Person.table]
+def normalizedNames := sql% [(p.name.toLower, p.name.length) | p : Person ← table]
 ```
 
 也可以用 `open scoped LeanRel.SQL.Standard`，或用 `open LeanRel.SQL.Standard in` 限定到单个声明。仅仅 `import LeanRel` 不激活这些翻译，依赖模块中的 `open` 也不会传播给 importer。
@@ -119,11 +132,11 @@ def lowerName (name : String) : String := name.toLower
 end MyTranslations
 
 open MyTranslations in
-def customNames := sql% [lowerName p.name | p ← Person.table]
+def customNames := sql% [lowerName p.name | p : Person ← table]
 
 section
 attribute [local sql_function "LOWER" 1] String.toLower
-def localNames := sql% [p.name.toLower | p ← Person.table]
+def localNames := sql% [p.name.toLower | p : Person ← table]
 end
 ```
 
@@ -141,7 +154,7 @@ def eligible (minimum : Int) (p : Person.Columns SQL.Scalar) : SQL.Scalar Bool :
 
 def direct (minimum : Int) := sql! [
   SELECT (p.name, p.age + 1)
-  FROM p IN Person.table
+  FROM p IN @table Person _
   WHERE eligible minimum p
   ORDER BY [p.id.asc]]
 ```
@@ -154,14 +167,14 @@ def direct (minimum : Int) := sql! [
 
 ```lean
 def birthdays := sql! [
-  UPDATE p IN Person.table
+  UPDATE p IN @table Person _
   SET {p with age := p.age + 1}
   WHERE eligible 18 p]
 
-def removeChildren := sql! [DELETE FROM p IN Person.table WHERE p.age <. 18]
+def removeChildren := sql! [DELETE FROM p IN @table Person _ WHERE p.age <. 18]
 
 -- rows : List Person；返回 Except String SQL.Statement，校验编码和键。
-def insertPeople (rows : List Person) := sql! [INSERT INTO Person.table VALUES rows]
+def insertPeople (rows : List Person) := sql! [INSERT INTO @table Person _ VALUES rows]
 ```
 
 插入复用完整 Lean 记录和 schema 顺序；更新从记录更新生成有变化的赋值。它们直接生成 SQL DML，不经过 relational lens。
@@ -170,7 +183,7 @@ def insertPeople (rows : List Person) := sql! [INSERT INTO Person.table VALUES r
 
 ```lean
 def prepared := SQL.render .sqlite sql! [
-  SELECT p.name FROM p IN Person.table WHERE eligible 18 p]
+  SELECT p.name FROM p IN @table Person _ WHERE eligible 18 p]
 ```
 
 ## SQL 中端：接近 SQL 的完整语句构造入口
@@ -181,7 +194,7 @@ def prepared := SQL.render .sqlite sql! [
 def minimumAge : Int := 18
 def predicate := sql_expr! [age >= ${minimumAge}]
 def queryPart := sql_query! [
-  SELECT name FROM @{Person.schema} WHERE @{predicate}]
+  SELECT name FROM @{HasTable.schema Person} WHERE @{predicate}]
 def statement := sql! [
   WITH grown AS (@{queryPart}) SELECT name FROM grown ORDER BY name]
 ```
@@ -197,13 +210,13 @@ def statement := sql! [
 ## Relational lenses 与实际更新
 
 ```lean
-def people := View.base Person.table
+def people := View.base (@table Person _)
 def adultsView := people.select (fun p => p.age ≥ 18)
 def birthday := update [
   {p with age := p.age + 1} | p ← people, p.age ≥ 18]
 ```
 
-`update` 中的 guard 只选择要修改的行，其余行保留。当前一次 comprehension 绑定一个 view；多表更新先组合 view。
+`update` 中的 guard 只选择要修改的行，其余行保留。也可以直接绑定 `p : Person ← View.base table`，由标注确定默认表。当前一次 comprehension 绑定一个 view；多表更新先组合 view。
 
 提供基本表、selection、保留键的 projection、rename、带删除策略的 natural join。Projection 从旧数据恢复隐藏字段，新键必须提供默认值。Selection 根据函数依赖修订隐藏行。Join 要求共享字段能决定右侧，默认删除左侧，可显式选择 `.right`／`.both`；来源重叠的 self-join 更新被拒绝。
 

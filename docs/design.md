@@ -19,6 +19,8 @@ flowchart LR
 
 `query% [...]`／`query% { ... }` 构造原生请求，`sql% [...]`／`sql% { ... }` 构造 SQL 查询。它们共用 `querySpec` parser 与 `expandQuerySpec`，只有最终 consumer 不同；`query` 不作为关键字注册。`sql%` 也接受已有查询定义或组合子 term。
 
+生成器支持可选的行类型 `p : Person ← table`，展开后成为普通 lambda 的参数标注。`ToQuery` 的 source 参数是 `Type → Type`，转换类型为 `source α → Query α`，让行类型同时出现在输入和输出中；Lean elaborator 因而能在数据源、参数标注和结果上下文之间传播类型，不需要自行实现推导。`Source`、`Query`、`List` 和 `View` 通过 instance 接入。
+
 `sql%` 在 elaboration 阶段读取已 elaborated 的 Lean Expr，识别组合子和标量运算、展开定义、调用登记的 SQL 函数规则。这是一个独立 consumer。它生成 SQL AST 的 Lean 构造程序，允许外部参数在运行时求值。运行时的数据库行值不提前在 Lean 中计算。
 
 `@[sql_function "NAME" n]` 与 `attribute [sql_function "NAME" n] fn` 共用 Lean 的 attribute 机制。参数语法参考 [binary 的 `bin_enum`](https://github.com/Lean-zh/binary/blob/master/Binary/Deriving.lean)，注册和作用域采用 [`ext` 的写法](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/Elab/Tactic/Ext.lean)：`registerBuiltinAttribute` 配合 `SimpleScopedEnvExtension`，把 Lean 传入的 `AttributeKind` 直接交给扩展的 `add`。规则归属于应用 attribute 的模块，可以标记 `String.toLower` 等导入声明；不按函数的定义模块查找。
@@ -33,9 +35,11 @@ SQL renderer 负责方言差异；connection 负责准备语句、绑定值、�
 
 ## 为什么选择 schema command
 
-[Lean-zh/protobuf](https://github.com/Lean-zh/protobuf) 的 internal notation 展示了很适合这里的方法：把声明展开成常规 Lean 定义，并用环境扩展保留额外信息。这里采用同一路线，生成原生记录、通用字段容器、codec 和普通 schema 值，同时登记可导入的元数据。
+[Lean-zh/protobuf](https://github.com/Lean-zh/protobuf) 的 internal notation 展示了很适合这里的方法：把声明展开成常规 Lean 定义，并用环境扩展保留额外信息。这里采用同一路线，生成原生记录、通用字段容器、codec 和 `HasTable` instance，同时登记可导入的元数据。
 
-只返回一个运行时 schema 值不足以直接产生可用的原生字段声明；command 可以同时提供两者。`.schema`／`.table` 仍可以作为普通值传参。SQL adapter 根据静态 row type 获取字段，物理 source 的名字可以来自运行时值。
+只返回一个运行时 schema 值不足以直接产生可用的原生字段声明；command 可以同时提供两者。`table`（即 `HasTable.table`）与 `HasTable.schema Person` 都是普通 Lean term，分别取得 typed source 和它的元数据。原先的 `$schemaId` 只是 elaborator 为 `Person.schema` 构造名称的局部变量，没有特殊语义；现在与 `Person.table` 一起移除，不再占用记录字段名称。需要显式行类型时写 `@table Person _`。
+
+SQL adapter 根据静态 row type 获取字段，物理 source 的名字可以来自运行时值；局部 `HasTable` instance 也遵循同一逻辑。schema 元数据扩展仅按 row type 查找，不再记录生成的 `.table` 名称。字段 `table` 因 SQL 标准保留字 `TABLE` 被拒绝，大小写一致处理；`schema` 在 SQL:2023 中非保留，command parser 使用 `nonReservedSymbol`，使这个名称也能直接用作字段。
 
 字段容器 `Person.Columns F` 的参数不特指 SQL。它可以容纳当前的 `SQL.Scalar`，也可以用于后续解释器。消费者无须再维护一套字符串列名映射。
 
@@ -72,6 +76,8 @@ SQL renderer 负责方言差异；connection 负责准备语句、绑定值、�
 ## 验证
 
 测试覆盖独立中端导入、跨模块元数据与函数规则、生成字段的类型错误、comprehension 扩展和 ASCII／Unicode 箭头、查询与 SQLite 对照、排序分页作用域、两层相关嵌套、分组、NULL、原生 SQL 函数复用、CTE、窗口、DML、lens FD 传播、快照冲突、受影响行数检查及整批事务回滚。
+
+Schema 测试覆盖跨模块 instance、可选的生成器类型标注、由 source／结果上下文推导行类型、局部表 instance 的覆盖与恢复、移除旧辅助定义、保留字检查，以及名为 `schema` 的字段经由 SQLite 查询和更新。
 
 函数规则测试还覆盖导入后未激活、`open`／`open scoped`／`open ... in`、namespace 内激活、局部覆盖和退出后恢复、文件末尾仍有效的 local 规则不导出，以及全部标准函数的 SQLite 执行和字符长度的方言渲染。
 

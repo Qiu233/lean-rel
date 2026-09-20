@@ -6,7 +6,6 @@ open Lean Meta Elab Command Term
 /-- Persisted elaborator metadata, also available after importing a compiled module. -/
 structure SchemaInfo where
   rowType : Name
-  source : Name
   definition : TableDef
   projections : Array (Name × String)
   deriving Inhabited, Repr
@@ -18,11 +17,15 @@ initialize schemaExtension : SimplePersistentEnvExtension SchemaInfo (Array Sche
   }
 
 def findSchema? (env : Environment) (name : Name) : Option SchemaInfo :=
-  (schemaExtension.getState env).find? fun s => s.rowType == name || s.source == name
+  (schemaExtension.getState env).find? fun s => s.rowType == name
 
 syntax schemaField := ident " : " term
 syntax schemaDependency := "[" ident,* "]" " -> " "[" ident,* "]"
-syntax (name := schemaDecl) "schema " ident str " {" schemaField,+ "}"
+-- Command parsers need the identifier entry as well as the token entry. Keep
+-- `schema` available as an ordinary identifier, including a schema field name.
+private def schemaKeyword : Lean.Parser.Parser :=
+  Parser.nonReservedSymbol "schema" (includeIdent := true)
+syntax (name := schemaDecl) schemaKeyword ident str " {" schemaField,+ "}"
   &"key" "[" ident,* "]" (&"dependencies" "{" sepBy1(schemaDependency, ";") "}")? : command
 
 private def scalarTypeTerm : ScalarType → TermElabM (TSyntax `term)
@@ -35,7 +38,7 @@ private def scalarTypeTerm : ScalarType → TermElabM (TSyntax `term)
 
 @[command_elab schemaDecl]
 unsafe def elabSchema : CommandElab := fun stx => do
-  let `(schema $name:ident $dbName:str { $[$fields:schemaField],* } key [$[$keys:ident],*]
+  let `(command| schema $name:ident $dbName:str { $[$fields:schemaField],* } key [$[$keys:ident],*]
     $[dependencies { $[$fds:schemaDependency];* }]?) := stx | throwUnsupportedSyntax
   let mut fieldNames : Array Ident := #[]
   let mut types : Array (TSyntax `term) := #[]
@@ -44,6 +47,8 @@ unsafe def elabSchema : CommandElab := fun stx => do
     if fieldNames.any (·.getId == n.getId) then throwErrorAt n "duplicate schema field"
     if n.getId.isAnonymous || n.getId.components.length != 1 then
       throwErrorAt n "a field needs a simple identifier"
+    if n.getId.toString.toUpper == "TABLE" then
+      throwErrorAt n "schema field '{n.getId}' is reserved by the SQL standard (TABLE)"
     fieldNames := fieldNames.push n
     types := types.push t
   let names := fieldNames.map fun n => n.getId.toString
@@ -99,19 +104,16 @@ unsafe def elabSchema : CommandElab := fun stx => do
         return { $[$fieldNames:ident := $decoders:term],* : $name }
       | _ => Except.error "expected schema record"
     shape := Shape.record [$shapes,*]))
-  let schemaId := mkIdent (name.getId ++ `schema)
-  let tableId := mkIdent (name.getId ++ `table)
   let cols ← liftTermElabM do
     definition.columns.toArray.mapM fun c => do `(Column.mk $(quote c.name) $(← scalarTypeTerm c.type))
   let deps ← dependencies.mapM fun d =>
     `(FunctionalDependency.mk $(quote d.determinant) $(quote d.dependent))
-  elabCommand (← `(def $schemaId : TableDef := {
-    name := $dbName, columns := [$cols,*], key := $(quote definition.key), dependencies := [$deps,*]}))
-  elabCommand (← `(def $tableId : Source $name := ⟨$schemaId⟩))
+  elabCommand (← `(instance : HasTable $name where
+    table := ⟨{
+      name := $dbName, columns := [$cols,*], key := $(quote definition.key), dependencies := [$deps,*]}⟩))
   let fullName := (← getCurrNamespace) ++ name.getId
   let info : SchemaInfo := {
     rowType := fullName
-    source := fullName ++ `table
     definition
     projections := fieldNames.map fun f => (fullName ++ f.getId, f.getId.toString)
   }

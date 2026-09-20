@@ -9,6 +9,7 @@ schema Team "teams" { teamId : Int, label : String } key [teamId]
 schema Brief "brief" { id : Int, name : String } key [id]
 schema Track "tracks" { album : Int, track : Int, rating : Int } key [album, track]
   dependencies { [track] -> [rating] }
+schema MetadataField "metadata_fields" { id : Int, schema : String, tableName : String } key [id]
 
 -- Test declaration attributes and SQL arity excluding implicit Lean parameters.
 @[sql_function "COALESCE" 2]
@@ -26,10 +27,10 @@ def records [Codec α] (xs : List α) : Relation := xs.filterMap fun x =>
 
 def database : Database := [("people", records people), ("teams", records teams), ("tracks", records tracks)]
 
-def adults (minimum : Int) := query% [ (p.name, p.age + 1) | p ← Person.table, p.age ≥ minimum ]
-def peopleView := View.base Person.table
+def adults (minimum : Int) := query% [ (p.name, p.age + 1) | p : Person ← table, p.age ≥ minimum ]
+def peopleView := View.base (@table Person _)
 def adultsView := peopleView.select (fun p => p.age ≥ 18)
-def briefView := peopleView.project Brief.table [("age", .int 0), ("teamId", .int 10), ("note", .null)]
-def joinedView := peopleView.join (View.base Team.table)
+def briefView := peopleView.project (@table Brief _) [("age", .int 0), ("teamId", .int 10), ("note", .null)]
+def joinedView := peopleView.join (View.base (@table Team _))
 
 end LeanRel.Tests
