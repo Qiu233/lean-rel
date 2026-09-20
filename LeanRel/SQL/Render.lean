@@ -98,6 +98,8 @@ mutual
       if name.isEmpty || !name.toList.all (fun c => c.isAlphanum || c == '_') then
         throw "invalid SQL function name"
       let args ← args.mapM (expression d)
+      -- SQLite spells SQL character length LENGTH; MySQL's LENGTH counts bytes.
+      let name := if d == .sqlite && name.toUpper == "CHAR_LENGTH" then "LENGTH" else name
       return name ++ "(" ++ (if distinct then "DISTINCT " else "") ++ String.intercalate ", " args ++ ")"
     | .caseWhen branches otherwise => do
       let branches ← branches.mapM fun (c, v) => return s!"WHEN {← expression d c} THEN {← expression d v}"

@@ -16,12 +16,12 @@ structure FunctionRule where
   arity : Nat
   deriving Inhabited
 
-/-- Rules belong to the module applying the attribute, which can differ from the
-function's defining module. Merge them on import, including rules for imported functions. -/
-initialize functionRules : SimplePersistentEnvExtension FunctionRule (Array FunctionRule) ←
-  registerSimplePersistentEnvExtension {
-    addEntryFn := Array.push
-    addImportedFn := fun entries => entries.foldl Array.append #[]
+/-- Rules follow Lean's global/local/scoped attribute semantics, including when
+the marked function was imported. The most recently activated rule takes precedence. -/
+initialize functionRules : SimpleScopedEnvExtension FunctionRule (NameMap FunctionRule) ←
+  registerSimpleScopedEnvExtension {
+    initial := {}
+    addEntry := fun rules rule => rules.insert rule.function rule
   }
 
 /-- Declare the SQL interpretation of a native scalar function. -/
@@ -34,9 +34,8 @@ initialize
     name := `sql_function
     descr := "translate a native scalar function to a SQL function call"
     add := fun decl stx kind => do
-      unless kind == .global do throwAttrMustBeGlobal `sql_function kind
       let `(attr| sql_function $sql:str $arity:num) := stx | throwUnsupportedSyntax
-      modifyEnv fun env => functionRules.addEntry env ⟨decl, sql.getString, arity.getNat⟩
+      functionRules.add ⟨decl, sql.getString, arity.getNat⟩ kind
   }
 
 private inductive Binding where
@@ -293,7 +292,7 @@ mutual
         if a.length != b.length then throwError "comparison result shapes disagree"
         if a.length != 1 && op != ``LeanRel.SQL.BinOp.nullSafeEq then throwError "scalar operands required"
         return .scalar (← conjunction (← (a.zip b).mapM fun (a, b) => binary op a b))
-      if let some rule := (functionRules.getState (← getEnv)).find? (·.function == fn) then
+      if let some rule := (functionRules.getState (← getEnv)).find? fn then
         let args ← (args.toList.drop (args.size - rule.arity)).mapM fun a => do scalar (← value env a)
         return .scalar (← mkAppM ``LeanRel.SQL.Expr.call #[toExpr rule.sqlName, ← list exprType args, toExpr false])
       return ← value env (← unfold e)

@@ -6,5 +6,6 @@ import LeanRel.SQL.Syntax
 import LeanRel.SQL.NativeSyntax
 import LeanRel.SQL.Execute
 import LeanRel.Compiler.SQL
+import LeanRel.Compiler.SQL.Standard
 import LeanRel.Compiler.Update
 import LeanRel.Backend.SQLite

@@ -1,6 +1,7 @@
 import Tests.Schema
 import Tests.MiddleOnly
 import Tests.Compiler
+import Tests.FunctionScopes
 
 open LeanRel LeanRel.Frontend LeanRel.Tests
 open scoped LeanRel.SQL
@@ -27,6 +28,7 @@ def countSQL := sql% (adults 18).count
 def sumSQL := sql% (query% [p.age | p ← Person.table]).sum
 def anySQL := sql% (Query.scan Person.table).any (fun p => p.age > 29)
 def allSQL := sql% (Query.scan Person.table).all (fun p => p.age > 20)
+open LeanRel.SQL.Standard in
 def lowerSQL := sql% [p.name.toLower | p ← Person.table]
 def fallbackSQL := sql% [valueOr p.note p.name | p ← Person.table]
 def optionalSQL := sql% [p.id | p ← Person.table, p.note == none]
@@ -101,6 +103,7 @@ private def compareQuery [Codec α] [BEq α] (connection : SQL.Connection) (name
   check name (expected == actual)
 
 def main : IO Unit := do
+  LeanRel.Tests.FunctionScopes.run
   check "native comprehensions" ((← get ((adults 18).run database)) == [("Ada", 31), ("Chen", 26)])
   check "native nested terms" ((← get (nativeNested.run database)) == [("Ada", [31, 32]), ("Bo", [16, 17]), ("Chen", [26, 27])])
   let extended := query% [p.name | p ← Person.table, unless p.age < 18]
@@ -141,7 +144,7 @@ def main : IO Unit := do
   compareQuery connection "SQL/native sum" (query% [p.age | p ← Person.table]).sum sumSQL
   compareQuery connection "SQL/native any" ((Query.scan Person.table).any (fun p => p.age > 29)) anySQL
   compareQuery connection "SQL/native all" ((Query.scan Person.table).all (fun p => p.age > 20)) allSQL
-  compareQuery connection "imported attribute on existing function" (query% [p.name.toLower | p ← Person.table]) lowerSQL
+  compareQuery connection "scoped standard LOWER translation" (query% [p.name.toLower | p ← Person.table]) lowerSQL
   compareQuery connection "imported declaration attribute with implicit parameter"
     (query% [valueOr p.note p.name | p ← Person.table]) fallbackSQL
   compareQuery connection "nullable equality" (query% [p.id | p ← Person.table, p.note == none]) optionalSQL

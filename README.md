@@ -89,16 +89,47 @@ macro_rules
 
 块语法同样提供 `query% { for p in Person.table; where ...; yield ... }` 和 `sql% { ... }`，共用 `queryBody%` 扩展点。
 
-用带参数的 attribute 登记标量函数的 SQL 翻译：
+常用标量函数翻译随 `import LeanRel` 加载，全部登记在 `LeanRel.SQL.Standard` 的 scoped 规则中。打开 namespace 后启用：
 
 ```lean
-attribute [sql_function "LOWER" 1] String.toLower
+open LeanRel.SQL.Standard
 
-@[sql_function "LOWER" 1]
-def lowerName (name : String) : String := name.toLower
+def normalizedNames := sql% [(p.name.toLower, p.name.length) | p ← Person.table]
 ```
 
-这两种写法都登记全局规则，通过 `.olean` 持久化，导入声明规则的模块后即可用于 `sql%`。数值参数指定传给 SQL 函数的末尾实参数量，不包含前面的隐式类型参数。规则只影响 SQL 翻译，原生 `query%` 仍调用 Lean 函数。
+也可以用 `open scoped LeanRel.SQL.Standard`，或用 `open LeanRel.SQL.Standard in` 限定到单个声明。仅仅 `import LeanRel` 不激活这些翻译，依赖模块中的 `open` 也不会传播给 importer。
+
+| Lean 函数 | SQL 翻译 |
+| --- | --- |
+| `String.toLower` / `String.toUpper` | `LOWER` / `UPPER` |
+| `String.append`（`++`） | `CONCAT` |
+| `String.length` | `CHAR_LENGTH`，SQLite 渲染为 `LENGTH` |
+| `Int.natAbs` / `Float.abs` | `ABS` |
+| `Int.sign` | `SIGN` |
+| `Option.getD` | `COALESCE` |
+
+自定义翻译同样使用 Lean 自带的 attribute 作用域语法：
+
+```lean
+namespace MyTranslations
+attribute [scoped sql_function "LOWER" 1] String.toLower
+
+@[scoped sql_function "LOWER" 1]
+def lowerName (name : String) : String := name.toLower
+end MyTranslations
+
+open MyTranslations in
+def customNames := sql% [lowerName p.name | p ← Person.table]
+
+section
+attribute [local sql_function "LOWER" 1] String.toLower
+def localNames := sql% [p.name.toLower | p ← Person.table]
+end
+```
+
+`scoped` 规则通过 `.olean` 持久化，在声明它的 namespace 内及打开该 namespace 的作用域中生效。`local` 遵循 Lean 的 section／namespace 边界；顶层声明持续到文件末尾，不导出。省略修饰词的 `[sql_function "LOWER" 1]` 则登记全局规则，导入后立即生效。同一函数以后登记或激活的规则为准，退出局部作用域时恢复外层规则。
+
+数值参数指定传给 SQL 函数的末尾实参数量，不包含前面的隐式类型参数。规则只影响 SQL 翻译，原生 `query%` 仍调用 Lean 函数。标准集合采用数据库标量语义：Lean 4.34.0 的大小写转换仅处理 ASCII，数据库可能按 locale 转换更多字符；SQLite 的 `LENGTH` 在 NUL 字符处停止，数值计算受数据库范围限制。参见 [Lean 的字符串实现](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Data/String/Modify.lean)、[SQLite 标量函数](https://www.sqlite.org/lang_corefunc.html)和 [PostgreSQL 字符串函数](https://www.postgresql.org/docs/current/functions-string.html)。
 
 ## SQL 中端：复用 Lean 定义
 
@@ -196,7 +227,7 @@ PostgreSQL、SQLite、MySQL 有独立的参数占位符、引用／转义及能�
 
 - 原生前端可运行任意合法的纯 Lean term，但 SQL 编译并非 Lean 通用求值器。可以展开的函数和已注册规则才能下推；黑盒运行时 `Query` 闭包不能重新反射成 SQL。
 - SQL 适配器目前翻译 schema source、投影／过滤／join、集合并、排序分页、聚合、分组和嵌套集合。普通 List 生成器、任意 List 消费函数、直接对 `View.get` 的编译以及部分需要 LATERAL 的相关组合尚未实现；它们仍可在参考解释器执行。
-- `[sql_function "SQL_NAME" n]` 可扩展标量函数规则。声明者负责保证语义对应，例如 Lean Unicode 小写转换与 SQLite 内置 LOWER 的适用范围不同。
+- `[sql_function "SQL_NAME" n]` 可扩展标量函数规则。声明者负责保证语义对应；`LeanRel.SQL.Standard` 的适用边界见上文。
 - 编译器检查算术／比较实例，`BEq`、去重和分组需要对应的 `LawfulBEq`；排序目前接受标准 Int／Nat／String／Bool 的 `Ord`。自定义实例不会被默默替换为 SQL 默认运算。
 - 未显式排序的 SQL 查询不保证与内存 List 的遍历顺序一致。查询保留重复项；lens 使用有键集合语义。
 - Lean Int 没有位数上限，数据库数值、字符串排序、NULL 运算有各自语义。SQLite 绑定检查整数范围；SQL 算术不是无限精度 Lean Int 的完整实现。

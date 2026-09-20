@@ -21,7 +21,11 @@ flowchart LR
 
 `sql%` 在 elaboration 阶段读取已 elaborated 的 Lean Expr，识别组合子和标量运算、展开定义、调用登记的 SQL 函数规则。这是一个独立 consumer。它生成 SQL AST 的 Lean 构造程序，允许外部参数在运行时求值。运行时的数据库行值不提前在 Lean 中计算。
 
-`@[sql_function "NAME" n]` 与 `attribute [sql_function "NAME" n] fn` 共用 Lean 的 attribute 机制。参数语法参考 [binary 的 `bin_enum`](https://github.com/Lean-zh/binary/blob/master/Binary/Deriving.lean)，注册采用 [`ext` 的 `registerBuiltinAttribute` 写法](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/Elab/Tactic/Ext.lean)；存储使用 `SimplePersistentEnvExtension`，导入时合并各模块登记的规则。这里不能直接用 `registerParametricAttribute`：[Lean 4.34.0 的这个辅助接口](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/Attributes.lean)拒绝给已导入的声明加属性，而 SQL 适配模块需要给 `String.toLower` 等外部声明登记规则。规则因此归属于应用 attribute 的模块，通过 `.olean` 导出；不按函数的定义模块查找。当前 `sql_function` 只接受全局规则；`ext` 使用的 `SimpleScopedEnvExtension` 还支持 `local`／`scoped` 作用域。
+`@[sql_function "NAME" n]` 与 `attribute [sql_function "NAME" n] fn` 共用 Lean 的 attribute 机制。参数语法参考 [binary 的 `bin_enum`](https://github.com/Lean-zh/binary/blob/master/Binary/Deriving.lean)，注册和作用域采用 [`ext` 的写法](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/Elab/Tactic/Ext.lean)：`registerBuiltinAttribute` 配合 `SimpleScopedEnvExtension`，把 Lean 传入的 `AttributeKind` 直接交给扩展的 `add`。规则归属于应用 attribute 的模块，可以标记 `String.toLower` 等导入声明；不按函数的定义模块查找。
+
+[Lean 的 scoped extension](https://github.com/leanprover/lean4/blob/v4.34.0/src/Lean/ScopedEnvExtension.lean)负责导入和作用域栈：global 规则立即启用，scoped 规则随 namespace 导出、打开时激活，local 规则只修改当前作用域且不导出。活动规则按函数名存入 `NameMap`，后登记或激活的规则覆盖此前规则，离开作用域后恢复。没有新增 `local`／`scoped` parser，也不自行模拟 `open`。
+
+标准规则模块 `LeanRel.Compiler.SQL.Standard` 由 `LeanRel` 自动导入，所有规则位于 `LeanRel.SQL.Standard` namespace 并标记 scoped；用户显式打开它才能启用。它覆盖大小写、拼接、字符长度、绝对值、符号和可空值回退。字符长度用中端 `CHAR_LENGTH` 表示，SQLite renderer 负责改成 `LENGTH`，避免把 MySQL 的字节长度当字符长度。
 
 中端有自己的公开 SQL AST，以及直接构造它的 Lean builder。`SQL.Plan`／`SQL.Scalar` 使用统一的别名供应来组合相关子查询；schema 生成的 `Columns F` 提供类型明确的字段访问。这里的 SQL 语义是中端自身的，不要求用户经过前端。
 
@@ -68,5 +72,7 @@ SQL renderer 负责方言差异；connection 负责准备语句、绑定值、�
 ## 验证
 
 测试覆盖独立中端导入、跨模块元数据与函数规则、生成字段的类型错误、comprehension 扩展和 ASCII／Unicode 箭头、查询与 SQLite 对照、排序分页作用域、两层相关嵌套、分组、NULL、原生 SQL 函数复用、CTE、窗口、DML、lens FD 传播、快照冲突、受影响行数检查及整批事务回滚。
+
+函数规则测试还覆盖导入后未激活、`open`／`open scoped`／`open ... in`、namespace 内激活、局部覆盖和退出后恢复、文件末尾仍有效的 local 规则不导出，以及全部标准函数的 SQLite 执行和字符长度的方言渲染。
 
 示例和集成测试通过 leansqlite 执行；PostgreSQL／MySQL 当前只验证渲染与已知能力拒绝。
