@@ -1,0 +1,22 @@
+name = "lean-rel"
+version = "0.1.0"
+defaultTargets = ["lean-rel"]
+
+[[require]]
+name = "leansqlite"
+git = "https://github.com/leanprover/leansqlite.git"
+rev = "v4.34.0"
+
+[[lean_lib]]
+name = "LeanRel"
+
+[[lean_exe]]
+name = "lean-rel"
+root = "Main"
+
+[[lean_lib]]
+name = "Tests"
+
+[[lean_exe]]
+name = "lean-rel-tests"
+root = "Tests.Main"
