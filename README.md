@@ -6,14 +6,6 @@ The view update model draws on [Relational Lenses: A Language for Updatable View
 
 ## Quick start
 
-The project uses Lean 4.34.0, selected by `lean-toolchain`. A C compiler is required: [leanprover/leansqlite](https://github.com/leanprover/leansqlite/tree/v4.34.0) builds its bundled SQLite. From the repository root:
-
-```sh
-lake build
-```
-
-Save the following as `QuickStart.lean` in the repository root. It declares a schema, inserts records, runs a comprehension as SQL, and updates a view:
-
 ```lean
 import LeanRel
 
@@ -51,20 +43,7 @@ def main : IO Unit := do
 #eval main
 ```
 
-Run it with:
-
-```sh
-lake lean QuickStart.lean
-```
-
 The standard translation namespace makes `String.toLower` compile to SQL `LOWER`. `query%` builds requests for the native reference interpreter, `sql%` compiles frontend queries to SQL, and `sql!` constructs SQL directly.
-
-The repository also includes a [demo](Main.lean) and [integration tests](Tests/Main.lean) that execute against SQLite:
-
-```sh
-lake exe lean-rel
-lake test
-```
 
 The examples below continue from the imports and `Person` declaration in the quick start. Standard translations are enabled by default in these examples. The library API is still evolving.
 
