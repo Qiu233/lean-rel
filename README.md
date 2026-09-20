@@ -1,6 +1,8 @@
 # lean-rel
 
-Native Lean queries and updates, with a SQL middle end that can also be used directly. The frontend is independent of SQL, and the SQL middle end connects to databases through a backend interface.
+SQL-based relational queries and updates eDSL implementation in Lean 4, together with a dry, featured SQL eDSL middle-end.
+
+The view update model draws on [Relational Lenses: A Language for Updatable Views](https://www.jeffvaughan.net/docs/dblenses-pods.pdf) and [Incremental Relational Lenses](https://arxiv.org/abs/1807.01948).
 
 ## Quick start
 
